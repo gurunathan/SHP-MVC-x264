@@ -1432,14 +1432,18 @@ int x264_encoder_headers( x264_t *h, x264_nal_t **pp_nal, int *pi_nal )
     x264_pps_write( &h->out.bs, h->pps );
     if( x264_nal_end( h ) )
         return -1;
-
+		
     /* identify ourselves */
     x264_nal_start( h, NAL_SEI, NAL_PRIORITY_DISPOSABLE );
     if( x264_sei_version_write( h, &h->out.bs ) )
         return -1;
     if( x264_nal_end( h ) )
         return -1;
-
+		
+    /* write view scalability SEI */
+    /* Todo : make sure that MVC option is enabled */
+    x264_sei_view_scalability_write( h, &h->out.bs, 2 );	
+	
     frame_size = x264_encoder_encapsulate_nals( h, 0 );
 
     /* now set output*/
