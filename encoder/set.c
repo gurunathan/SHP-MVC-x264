@@ -558,84 +558,85 @@ void x264_sei_view_scalability_write( x264_t *h, bs_t *s, int num_views )
     bs_t q;
     uint8_t tmp_buf[100];
     /* Number of operation points depends on whether AVC (or) MVC is chosen */
-    uint8_t num_op_points = ( num_views == 1 )? 1 : 2; 
-    uint8_t prof_lev_info_present_flag [2] = {0};
-    uint8_t bitrate_info_present_flag [2] = {0};
-    uint8_t frm_rate_info_present_flag [2] = {0};
-    uint8_t view_dep_info_present_flag [2] = {0};
-    uint8_t param_sets_info_present_flag [2] ={0};
-    uint8_t bitstream_rest_info_present_flag [2] = {0};
-    
+    uint8_t num_op_points = ( num_views == 1 )? 1 : 2;
+    uint8_t prof_lev_info_present_flag[2]       = {0};
+    uint8_t bitrate_info_present_flag[2]        = {0};
+    uint8_t frm_rate_info_present_flag[2]       = {0};
+    uint8_t view_dep_info_present_flag[2]       = {0};
+    uint8_t param_sets_info_present_flag[2]     = {0};
+    uint8_t bitstream_rest_info_present_flag[2] = {0};
+
     bs_init( &q, tmp_buf, 100 );
 
     bs_realign( &q );
-    bs_write_ue( &q, ( num_op_points - 1 ) ); //number of operation points minus 1 
-    
-    for ( int i = 0; i <  (num_op_points - 1); i++ )
+    bs_write_ue( &q, ( num_op_points - 1 ) ); //number of operation points minus 1
+
+    for ( int i = 0; i <  ( num_op_points - 1 ); i++ )
     {
-        bs_write_ue( &q, i ); //operation point id     
-        bs_write( &q, 5, i ); // Lower value for high priority (left view) frames     
-        bs_write( &q, 3, i ); //temporal id, 0 for the left view     	    
-        bs_write_ue( &q, (num_views - 1) ); //number of target o/p views minus 1    	    	
-	
-        for( int j = 0; j <= (num_views - 1 ) ; j++ )	
-            bs_write_ue( &q, j ); //view_id              
-	
-        bs_write1( &q, 0 );   //profile_level_info_present_flag	
+        bs_write_ue( &q, i ); //operation point id
+        bs_write( &q, 5, i ); // Lower value for high priority (left view) frames
+        bs_write( &q, 3, i ); //temporal id, 0 for the left view
+        bs_write_ue( &q, ( num_views - 1 ) ); //number of target o/p views minus 1
+
+        for( int j = 0; j <= ( num_views - 1 ) ; j++ )
+            bs_write_ue( &q, j ); //view_id
+
+        bs_write1( &q, 0 );   //profile_level_info_present_flag
         bs_write1( &q, 0 );   //bitrate_info_present_flag
         bs_write1( &q, 0 );   //frame_rate_info_present_flag
-	
-	if ( !(num_views - 1) )
-         bs_write1( &q, 0 ); //view_dependency_info_present_flag
-         bs_write1( &q, 0 );    //parameter_sets_info_present_flag
-         bs_write1( &q, 0 );    //bitstream_restriction_info_present_flag
-	
-	if ( prof_lev_info_present_flag [i] )
+
+        if ( !(num_views - 1) )
+            bs_write1( &q, 0 ); //view_dependency_info_present_flag
+        bs_write1( &q, 0 ); //parameter_sets_info_present_flag
+        bs_write1( &q, 0 ); //bitstream_restriction_info_present_flag
+
+        if ( prof_lev_info_present_flag [i] )
             bs_write( &q, 24, 0 );   //op_profile_level_dc, Todo : code this based on view_id
-	    
-	if ( bitrate_info_present_flag [i] )
-	{
-        bs_write( &q, 16, 0 );   //average bit rate
-        bs_write( &q, 16, 0 );   //max bit rate
-        bs_write( &q, 16, 0 );   //max bit rate calc window
-	}	    	    
-	    
-	if ( frm_rate_info_present_flag [i] )
-	{
-        bs_write( &q, 2, 0 );   //constant_frame_rate_idc			    
-        bs_write( &q, 16, 0 );  //average frame rate			    	    
-	}
-	    
-	if ( view_dep_info_present_flag [i] )
+
+        if ( bitrate_info_present_flag [i] )
+        {
+            bs_write( &q, 16, 0 );   //average bit rate
+            bs_write( &q, 16, 0 );   //max bit rate
+            bs_write( &q, 16, 0 );   //max bit rate calc window
+        }
+
+        if ( frm_rate_info_present_flag [i] )
+        {
+            bs_write( &q, 2, 0 );   //constant_frame_rate_idc
+            bs_write( &q, 16, 0 );  //average frame rate
+        }
+
+        if ( view_dep_info_present_flag [i] )
             bs_write_ue( &q, 0 );   //number of directly dependent views, Todo: code this based on view_id
-	else      																    								    				    		   bs_write_ue( &q, 0 );   //view_dep_info_src_op_id
-	    
-	if ( param_sets_info_present_flag [i] )
-        { 
-	    for ( int j = 0; j <= i; j++) 
-                bs_write_ue( &q, 0 );   //SPS delta is always 1	    
-        bs_write_ue( &q, i );   //Number of subset SPS	
-	    for ( int j = 0; j <= i; j++) 
-                bs_write_ue( &q, 0 );   //subsetSPS delta is always 1	    	    	
-        bs_write1( &q,  i );   //Number of PPS minus 1
-	    for ( int j = 0; j <= i; j++) 
-                bs_write_ue( &q, 0 );   //PPS delta is always 1	    	    		    		
-	} 
-	else		    																    								    				       
-        bs_write_ue( &q, 1 );   //parameter_sets_info_src_op_id
-	    
-	if ( bitstream_rest_info_present_flag [i] )
-	{
-        bs_write1( &q, 0 );     //mv over picture boundaries flag
-        bs_write_ue( &q, 0 );   //max bytes per picture denom
-	    bs_write_ue( &q, 0 );   //mv bits per MB denom
-        bs_write_ue( &q, 0 );   //horizontal mv length (log2)
-	    bs_write_ue( &q, 0 );   //vertical mv length (log2)
-	    bs_write_ue( &q, 0 );   //number of re-ordered frames
-	    bs_write_ue( &q, 0 );   //number of decoded frame buffering
-	}    	    
+        else 
+            bs_write_ue( &q, 0 );   //view_dep_info_src_op_id
+
+        if ( param_sets_info_present_flag [i] )
+        {
+            for ( int j = 0; j <= i; j++)
+                bs_write_ue( &q, 0 );   //SPS delta is always 1
+            bs_write_ue( &q, i );       //Number of subset SPS
+            for ( int j = 0; j <= i; j++)
+                bs_write_ue( &q, 0 );   //subsetSPS delta is always 1
+            bs_write1( &q,  i );        //Number of PPS minus 1
+            for ( int j = 0; j <= i; j++)
+                bs_write_ue( &q, 0 );   //PPS delta is always 1
+        }
+        else
+            bs_write_ue( &q, 1 );   //parameter_sets_info_src_op_id
+
+        if ( bitstream_rest_info_present_flag [i] )
+        {
+            bs_write1( &q, 0 );     //mv over picture boundaries flag
+            bs_write_ue( &q, 0 );   //max bytes per picture denom
+            bs_write_ue( &q, 0 );   //mv bits per MB denom
+            bs_write_ue( &q, 0 );   //horizontal mv length (log2)
+            bs_write_ue( &q, 0 );   //vertical mv length (log2)
+            bs_write_ue( &q, 0 );   //number of re-ordered frames
+            bs_write_ue( &q, 0 );   //number of decoded frame buffering
+        }
     }
-    
+
     bs_align_10( &q );
     bs_flush( &q );
 
