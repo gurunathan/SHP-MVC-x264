@@ -74,6 +74,22 @@ enum nal_priority_e
     NAL_PRIORITY_HIGHEST    = 3,
 };
 
+/* Extended NAL unit header for right view frames of MVC.
+ * Total size of NAL headers will be four bytes (1 byte AVC) + 3 byte extended NAL.
+ * Note that this header applicable only for the slice headers
+ * Though the subset SPS is applicable for right view, it will still be coded
+ * with AVC style one byte NAL header */
+typedef struct
+{
+    uint8_t  b_non_idr_flag;      /* idr/non-idr */
+    uint8_t  i_priority_id;       /* lower value: high priority */
+    uint16_t i_view_id;           /* max 1024 views */
+    uint8_t  i_temporal_id;       /* max 6 levels */
+    uint8_t  b_anchor_pic_flag;   /* anchor pic : like GOP start */
+    uint8_t  b_inter_view_flag;   /* inter view pred enabled/disabled */
+    uint8_t  b_reserved_one_bit;  /* always 1 */
+} x264_mvc_nal_t;
+
 /* The data within the payload is already NAL-encapsulated; the ref_idc and type
  * are merely in the struct for easy access by the calling application.
  * All data returned in an x264_nal_t, including the data in p_payload, is no longer
@@ -81,11 +97,12 @@ enum nal_priority_e
  * before calling x264_encoder_encode or x264_encoder_headers again. */
 typedef struct
 {
-    int i_ref_idc;  /* nal_priority_e */
-    int i_type;     /* nal_unit_type_e */
-    int b_long_startcode;
-    int i_first_mb; /* If this NAL is a slice, the index of the first MB in the slice. */
-    int i_last_mb;  /* If this NAL is a slice, the index of the last MB in the slice. */
+    int             i_ref_idc;  /* nal_priority_e */
+    int             i_type;     /* nal_unit_type_e */
+    x264_mvc_nal_t  mvc_nal; /* mvc_nal_structure */
+    int             b_long_startcode;
+    int             i_first_mb; /* If this NAL is a slice, the index of the first MB in the slice. */
+    int             i_last_mb;  /* If this NAL is a slice, the index of the last MB in the slice. */
 
     /* Size of payload in bytes. */
     int     i_payload;
@@ -278,6 +295,7 @@ typedef struct x264_param_t
     int         i_bframe_bias;
     int         i_bframe_pyramid;   /* Keep some B-frames as references: 0=off, 1=strict hierarchical, 2=normal */
     int         b_open_gop;
+    int         b_mvc_flag; /* support for MVC (SHP) support */
     int         b_bluray_compat;
 
     int         b_deblocking_filter;
@@ -683,6 +701,8 @@ typedef struct
     /* Out: whether this frame is a keyframe.  Important when using modes that result in
      * SEI recovery points being used instead of IDR frames. */
     int     b_keyframe;
+    /* In: whether this is a right view frame. used for 3D MVC encoding */
+    int     b_right_view_flag;
     /* In: user pts, Out: pts of encoded picture (user)*/
     int64_t i_pts;
     /* Out: frame dts. When the pts of the first frame is close to zero,

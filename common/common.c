@@ -621,6 +621,8 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
         else
             p->i_level_idc = atoi(value);
     }
+    OPT("3d-mvc-compat")
+        p->b_mvc_flag = atobool(value);
     OPT("bluray-compat")
         p->b_bluray_compat = atobool(value);
     OPT("sar")
@@ -1235,6 +1237,7 @@ char *x264_param2string( x264_param_t *p, int b_res )
     s += sprintf( s, " nr=%d", p->analyse.i_noise_reduction );
     s += sprintf( s, " decimate=%d", p->analyse.b_dct_decimate );
     s += sprintf( s, " interlaced=%s", p->b_interlaced ? p->b_tff ? "tff" : "bff" : p->b_fake_interlaced ? "fake" : "0" );
+    s += sprintf( s, " 3d-mvc-compat=%d", p->b_mvc_flag );
     s += sprintf( s, " bluray_compat=%d", p->b_bluray_compat );
 
     s += sprintf( s, " constrained_intra=%d", p->b_constrained_intra );

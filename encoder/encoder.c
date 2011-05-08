@@ -1440,11 +1440,16 @@ int x264_encoder_headers( x264_t *h, x264_nal_t **pp_nal, int *pi_nal )
     if( x264_nal_end( h ) )
         return -1;
 
-    /* write view scalability SEI */
-    /* Todo : make sure that MVC option is enabled */
-    x264_sei_view_scalability_write( h, &h->out.bs, 2 );
-    if( x264_nal_end( h ) )
-        return -1;    
+    /* check whether 3D MVC support option is enabled */
+    if( h->param.b_mvc_flag)
+    {
+        x264_nal_start( h, NAL_SEI, NAL_PRIORITY_DISPOSABLE );
+        /* write view scalability SEI */
+        x264_sei_view_scalability_write( h, &h->out.bs, 2 );
+        if( x264_nal_end( h ) )
+            return -1;
+        /* Todo : Code subset SPS & PPS */
+    }
 
     frame_size = x264_encoder_encapsulate_nals( h, 0 );
 
@@ -2727,6 +2732,17 @@ int     x264_encoder_encode( x264_t *h,
             if( x264_nal_end( h ) )
                 return -1;
             overhead += h->out.nal[h->out.i_nal-1].i_payload + NALU_OVERHEAD;
+
+            /* check whether 3D MVC support option is enabled */
+            if( h->param.b_mvc_flag)
+            {
+                x264_nal_start( h, NAL_SEI, NAL_PRIORITY_DISPOSABLE );
+                /* write view scalability SEI */
+                x264_sei_view_scalability_write( h, &h->out.bs, 2 );
+                if( x264_nal_end( h ) )
+                return -1;
+                /* Todo : Code subset SPS & PPS */
+            }
         }
 
         /* buffering period sei is written in x264_encoder_frame_end */

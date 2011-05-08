@@ -737,6 +737,7 @@ static void help( x264_param_t *defaults, int longhelp )
     H0( "      --seek <integer>        First frame to encode\n" );
     H0( "      --frames <integer>      Maximum number of frames to encode\n" );
     H0( "      --level <string>        Specify level (as defined by Annex A)\n" );
+    H1( "      --3d-mvc-compat         Enable 3D MVC support\n" );
     H1( "      --bluray-compat         Enable compatibility hacks for Blu-ray support\n" );
     H1( "\n" );
     H1( "  -v, --verbose               Print stats for each frame\n" );
@@ -829,6 +830,7 @@ static struct option long_options[] =
     { "b-bias",      required_argument, NULL, 0 },
     { "b-pyramid",   required_argument, NULL, 0 },
     { "open-gop",          no_argument, NULL, 0 },
+    { "3d-mvc-compat",     no_argument, NULL, 0 },
     { "bluray-compat",     no_argument, NULL, 0 },
     { "min-keyint",  required_argument, NULL, 'i' },
     { "keyint",      required_argument, NULL, 'I' },
