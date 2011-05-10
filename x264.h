@@ -87,7 +87,6 @@ typedef struct
     uint8_t  i_temporal_id;       /* max 6 levels */
     uint8_t  b_anchor_pic_flag;   /* anchor pic : like GOP start */
     uint8_t  b_inter_view_flag;   /* inter view pred enabled/disabled */
-    uint8_t  b_reserved_one_bit;  /* always 1 */
 } x264_mvc_nal_t;
 
 /* The data within the payload is already NAL-encapsulated; the ref_idc and type
