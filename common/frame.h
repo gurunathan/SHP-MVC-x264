@@ -156,6 +156,9 @@ typedef struct x264_frame
 
     /* user sei */
     x264_sei_t extra_sei;
+
+    /* right view (or) left view for MVC */
+    uint8_t b_right_view_flag;
 } x264_frame_t;
 
 /* synchronized frame list */

@@ -53,17 +53,20 @@ typedef struct x264_t x264_t;
 
 enum nal_unit_type_e
 {
-    NAL_UNKNOWN     = 0,
-    NAL_SLICE       = 1,
-    NAL_SLICE_DPA   = 2,
-    NAL_SLICE_DPB   = 3,
-    NAL_SLICE_DPC   = 4,
-    NAL_SLICE_IDR   = 5,    /* ref_idc != 0 */
-    NAL_SEI         = 6,    /* ref_idc == 0 */
-    NAL_SPS         = 7,
-    NAL_PPS         = 8,
-    NAL_AUD         = 9,
-    NAL_FILLER      = 12,
+    NAL_UNKNOWN       = 0,
+    NAL_SLICE         = 1,
+    NAL_SLICE_DPA     = 2,
+    NAL_SLICE_DPB     = 3,
+    NAL_SLICE_DPC     = 4,
+    NAL_SLICE_IDR     = 5,    /* ref_idc != 0 */
+    NAL_SEI           = 6,    /* ref_idc == 0 */
+    NAL_SPS           = 7,
+    NAL_PPS           = 8,
+    NAL_AUD           = 9,
+    NAL_FILLER        = 12,
+    NAL_SPS_EXTENSION = 13,
+    NAL_SUBSET_SPS    = 15,
+    NAL_MVC_SLICE     = 20,
     /* ref_idc == 0 for 6,9,10,11,12 */
 };
 enum nal_priority_e
@@ -76,7 +79,7 @@ enum nal_priority_e
 
 /* Extended NAL unit header for right view frames of MVC.
  * Total size of NAL headers will be four bytes (1 byte AVC) + 3 byte extended NAL.
- * Note that this header applicable only for the slice headers
+ * Note that this header is applicable only for the slice headers
  * Though the subset SPS is applicable for right view, it will still be coded
  * with AVC style one byte NAL header */
 typedef struct
@@ -96,9 +99,10 @@ typedef struct
  * before calling x264_encoder_encode or x264_encoder_headers again. */
 typedef struct
 {
-    int             i_ref_idc;  /* nal_priority_e */
-    int             i_type;     /* nal_unit_type_e */
-    x264_mvc_nal_t  mvc_nal; /* mvc_nal_structure */
+    int             i_ref_idc;          /* nal_priority_e */
+    int             i_type;             /* nal_unit_type_e */
+    x264_mvc_nal_t  st_mvc_nal;         /* mvc_nal_structure */
+    uint8_t         b_mvc_slice_header; /* Extended NAL header */
     int             b_long_startcode;
     int             i_first_mb; /* If this NAL is a slice, the index of the first MB in the slice. */
     int             i_last_mb;  /* If this NAL is a slice, the index of the last MB in the slice. */
@@ -701,7 +705,7 @@ typedef struct
      * SEI recovery points being used instead of IDR frames. */
     int     b_keyframe;
     /* In: whether this is a right view frame. used for 3D MVC encoding */
-    int     b_right_view_flag;
+    uint8_t b_right_view_flag;
     /* In: user pts, Out: pts of encoded picture (user)*/
     int64_t i_pts;
     /* Out: frame dts. When the pts of the first frame is close to zero,

@@ -578,7 +578,7 @@ void x264_sei_view_scalability_write( x264_t *h, bs_t *s, int num_views )
         bs_write( &q, 3, i ); //temporal id, 0 for the left view
         bs_write_ue( &q, ( num_views - 1 ) ); //number of target o/p views minus 1
 
-        for( int j = 0; j <= ( num_views - 1 ) ; j++ )
+        for( int j = 0; j < num_views; j++ )
             bs_write_ue( &q, j ); //view_id
 
         bs_write1( &q, 0 );   //profile_level_info_present_flag

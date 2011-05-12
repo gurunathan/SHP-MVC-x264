@@ -1339,6 +1339,23 @@ static void x264_nal_start( x264_t *h, int i_type, int i_ref_idc )
     nal->p_payload= &h->out.p_bitstream[bs_pos( &h->out.bs ) / 8];
 }
 
+static void x264_mvc_nal_start( x264_t *h, int i_type, int i_ref_idc )
+{
+    x264_nal_t *nal = &h->out.nal[h->out.i_nal];
+    nal->b_mvc_slice_header  = 1;
+    nal->i_ref_idc           = i_ref_idc;
+    nal->i_type              = i_type;
+    nal->b_long_startcode    = 1;
+    nal->st_mvc_nal.b_non_idr_flag     = ( (i_type % 5) ? 0 : 1 );
+    nal->st_mvc_nal.i_priority_id      = ( (i_type % 5) ? 0 : 1 ); //Lower value implies high priority
+    nal->st_mvc_nal.i_view_id          = 1;
+    nal->st_mvc_nal.i_temporal_id      = 0; //temporal id will be reset per view
+    nal->st_mvc_nal.b_anchor_pic_flag  = ( (i_type % 5) ? 1 : 0 ); // Todo : ATM it will be on only for IDR, need to re-look
+    nal->st_mvc_nal.b_inter_view_flag  = ( (i_type % 5) ? 0 : 1 );
+    nal->i_payload= 0;
+    nal->p_payload= &h->out.p_bitstream[bs_pos( &h->out.bs ) / 8];
+}
+
 /* if number of allocated nals is not enough, re-allocate a larger one. */
 static int x264_nal_check_buffer( x264_t *h )
 {
@@ -1940,9 +1957,14 @@ static int x264_slice_write( x264_t *h )
     b_deblock &= b_hpel || h->param.psz_dump_yuv;
     bs_realign( &h->out.bs );
 
-    /* Slice */
-    x264_nal_start( h, h->i_nal_type, h->i_nal_ref_idc );
-    h->out.nal[h->out.i_nal].i_first_mb = h->sh.i_first_mb;
+    /* AVC Slice */
+    if (!h->fenc->b_right_view_flag)    
+        x264_nal_start( h, h->i_nal_type, h->i_nal_ref_idc );
+    else
+        /* MVC Slice, so 4 byte NAL header (1 byte AVC + 3 byte MVC)*/
+        x264_mvc_nal_start( h, h->i_nal_type, h->i_nal_ref_idc );
+
+        h->out.nal[h->out.i_nal].i_first_mb = h->sh.i_first_mb;
 
     /* Slice header */
     x264_macroblock_thread_init( h );
@@ -2606,6 +2628,13 @@ int     x264_encoder_encode( x264_t *h,
         i_nal_ref_idc = NAL_PRIORITY_DISPOSABLE;
         h->sh.i_type = SLICE_TYPE_B;
     }
+    
+    /*
+    ** Check whether its a MVC Slice or not. Will not disturb the 
+    ** NAL priority and the slice type. Modify only the nal type 
+    */
+    if( h->fenc->b_right_view_flag )
+        i_nal_type    = NAL_MVC_SLICE;
 
     h->fdec->i_type = h->fenc->i_type;
     h->fdec->i_frame = h->fenc->i_frame;
