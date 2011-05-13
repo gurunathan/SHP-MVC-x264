@@ -249,7 +249,7 @@ void x264_sps_init( x264_sps_t *sps, int i_id, x264_param_t *param )
     }
 
     sps->vui.b_vcl_hrd_parameters_present = 0; // we don't support VCL HRD
-    if (!param->b_mvc_flag )
+    if ( !param->b_mvc_flag )
     {
         sps->vui.b_nal_hrd_parameters_present = !!param->i_nal_hrd;
         sps->vui.b_pic_struct_present = param->b_pic_struct;

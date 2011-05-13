@@ -1968,7 +1968,7 @@ static int x264_slice_write( x264_t *h )
     bs_realign( &h->out.bs );
 
     /* AVC Slice */
-    if (!h->fenc->b_right_view_flag)    
+    if ( !h->fenc->b_right_view_flag )
         x264_nal_start( h, h->i_nal_type, h->i_nal_ref_idc );
     else
         /* MVC Slice, so 4 byte NAL header (1 byte AVC + 3 byte MVC)*/
