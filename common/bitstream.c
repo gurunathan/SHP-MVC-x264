@@ -72,7 +72,7 @@ void x264_nal_encode( x264_t *h, uint8_t *dst, x264_nal_t *nal )
     {
         *dst++ = ( nal->st_mvc_nal.i_priority_id << 2 ) | ( nal->st_mvc_nal.b_non_idr_flag << 1 ) | 0x00;
         *dst++ = ( nal->st_mvc_nal.i_view_id & 0x0F ) ;
-        *dst++ = ( 0x01 << 7 ) | ( nal->st_mvc_nal.b_inter_view_flag << 6 )  | ( nal->st_mvc_nal.b_anchor_pic_flag << 5 ) | 
+        *dst++ = ( 0x00 << 7 ) | ( nal->st_mvc_nal.b_inter_view_flag << 6 )  | ( nal->st_mvc_nal.b_anchor_pic_flag << 5 ) | 
                                  ( nal->st_mvc_nal.i_temporal_id << 2     )  | ( nal->st_mvc_nal.i_view_id & 0x30  );
     }
 

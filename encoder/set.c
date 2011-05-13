@@ -239,7 +239,7 @@ void x264_sps_init( x264_sps_t *sps, int i_id, x264_param_t *param )
         sps->vui.i_chroma_loc_bottom = param->vui.i_chroma_loc;
     }
 
-    sps->vui.b_timing_info_present = param->i_timebase_num > 0 && param->i_timebase_den > 0;
+     sps->vui.b_timing_info_present = param->i_timebase_num > 0 && param->i_timebase_den > 0;
 
     if( sps->vui.b_timing_info_present )
     {
@@ -249,8 +249,16 @@ void x264_sps_init( x264_sps_t *sps, int i_id, x264_param_t *param )
     }
 
     sps->vui.b_vcl_hrd_parameters_present = 0; // we don't support VCL HRD
-    sps->vui.b_nal_hrd_parameters_present = !!param->i_nal_hrd;
-    sps->vui.b_pic_struct_present = param->b_pic_struct;
+    if (!param->b_mvc_flag )
+    {
+        sps->vui.b_nal_hrd_parameters_present = !!param->i_nal_hrd;
+        sps->vui.b_pic_struct_present = param->b_pic_struct;
+    }
+    else
+    {
+        sps->vui.b_nal_hrd_parameters_present = 0;
+        sps->vui.b_pic_struct_present = 0;
+    }
 
     // NOTE: HRD related parts of the SPS are initialised in x264_ratecontrol_init_reconfigurable
 

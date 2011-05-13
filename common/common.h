@@ -449,8 +449,9 @@ struct x264_t
     int64_t         i_last_idr_pts;
 
     /* We use only one SPS and one PPS */
-    x264_sps_t      sps_array[1];
-    x264_pps_t      pps_array[1];
+    /* For MVC, another set of SPS and PPS are required */
+    x264_sps_t      sps_array[2];
+    x264_pps_t      pps_array[2];
     int             i_idr_pic_id;
 
     /* quantization matrix for decoding, [cqm][qp%6][coef] */

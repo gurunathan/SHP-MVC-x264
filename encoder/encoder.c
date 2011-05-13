@@ -1006,6 +1006,16 @@ x264_t *x264_encoder_open( x264_param_t *param )
     h->pps = &h->pps_array[0];
     x264_pps_init( h->pps, h->param.i_sps_id, &h->param, h->sps );
 
+    if( param->b_mvc_flag)
+    {
+        /* used in subset sps */
+        h->sps = &h->sps_array[1];
+        x264_sps_init( h->sps, ( h->param.i_sps_id + 1), &h->param );
+        /* MVC nal will refer this PPS */
+        h->pps = &h->pps_array[1];
+        x264_pps_init( h->pps, ( h->param.i_sps_id + 1), &h->param, h->sps );
+    }
+
     x264_set_aspect_ratio( h, &h->param, 1 );
 
     x264_validate_levels( h, 1 );
@@ -1440,13 +1450,13 @@ int x264_encoder_headers( x264_t *h, x264_nal_t **pp_nal, int *pi_nal )
 
     /* generate sequence parameters */
     x264_nal_start( h, NAL_SPS, NAL_PRIORITY_HIGHEST );
-    x264_sps_write( &h->out.bs, h->sps );
+    x264_sps_write( &h->out.bs, &h->sps_array[0] );
     if( x264_nal_end( h ) )
         return -1;
 
     /* generate picture parameters */
     x264_nal_start( h, NAL_PPS, NAL_PRIORITY_HIGHEST );
-    x264_pps_write( &h->out.bs, h->pps );
+    x264_pps_write( &h->out.bs, &h->pps_array[0] );
     if( x264_nal_end( h ) )
         return -1;
 
@@ -2739,14 +2749,14 @@ int     x264_encoder_encode( x264_t *h,
         {
             /* generate sequence parameters */
             x264_nal_start( h, NAL_SPS, NAL_PRIORITY_HIGHEST );
-            x264_sps_write( &h->out.bs, h->sps );
+            x264_sps_write( &h->out.bs, &h->sps_array[0] );
             if( x264_nal_end( h ) )
                 return -1;
             overhead += h->out.nal[h->out.i_nal-1].i_payload + NALU_OVERHEAD;
 
             /* generate picture parameters */
             x264_nal_start( h, NAL_PPS, NAL_PRIORITY_HIGHEST );
-            x264_pps_write( &h->out.bs, h->pps );
+            x264_pps_write( &h->out.bs, &h->pps_array[0] );
             if( x264_nal_end( h ) )
                 return -1;
             overhead += h->out.nal[h->out.i_nal-1].i_payload + NALU_OVERHEAD;
@@ -2759,7 +2769,14 @@ int     x264_encoder_encode( x264_t *h,
                 x264_sei_view_scalability_write( h, &h->out.bs, 2 );
                 if( x264_nal_end( h ) )
                 return -1;
-                /* Todo : Code subset SPS & PPS */
+
+                /* Todo : Code subset SPS */
+                /* generate picture parameters */
+                x264_nal_start( h, NAL_PPS, NAL_PRIORITY_HIGHEST );
+                x264_pps_write( &h->out.bs, &h->pps_array[1] );
+                if( x264_nal_end( h ) )
+                    return -1;
+                overhead += h->out.nal[h->out.i_nal-1].i_payload + NALU_OVERHEAD;
             }
         }
 
