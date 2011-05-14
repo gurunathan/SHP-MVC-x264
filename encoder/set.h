@@ -27,8 +27,9 @@
 #ifndef X264_ENCODER_SET_H
 #define X264_ENCODER_SET_H
 
-void x264_sps_init( x264_sps_t *sps, int i_id, x264_param_t *param );
-void x264_sps_write( bs_t *s, x264_sps_t *sps );
+void x264_sps_init( x264_sps_t *sps, int i_id, x264_param_t *param, uint8_t b_mvc_sps_flag );
+void x264_sps_write( bs_t *s, x264_sps_t *sps, uint8_t b_write_vui_params_flag );
+void x264_subset_sps_write( bs_t *s, x264_sps_t *sps );
 void x264_pps_init( x264_pps_t *pps, int i_id, x264_param_t *param, x264_sps_t *sps );
 void x264_pps_write( bs_t *s, x264_pps_t *pps );
 void x264_sei_recovery_point_write( x264_t *h, bs_t *s, int recovery_frame_cnt );

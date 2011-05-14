@@ -794,7 +794,7 @@ static int x264_validate_parameters( x264_t *h )
             if( h->param.rc.i_rc_method == X264_RC_ABR && h->param.rc.i_vbv_buffer_size <= 0 )
                 h->param.rc.i_vbv_max_bitrate = h->param.rc.i_bitrate * 2;
             h->sps = h->sps_array;
-            x264_sps_init( h->sps, h->param.i_sps_id, &h->param );
+            x264_sps_init( h->sps, h->param.i_sps_id, &h->param, 0 );
             do h->param.i_level_idc = l->level_idc;
                 while( l[1].level_idc && x264_validate_levels( h, 0 ) && l++ );
             h->param.rc.i_vbv_max_bitrate = maxrate_bak;
@@ -946,7 +946,7 @@ static void x264_set_aspect_ratio( x264_t *h, x264_param_t *param, int initial )
                 h->param.vui.i_sar_width = i_w;
                 h->param.vui.i_sar_height = i_h;
             }
-            x264_sps_init( h->sps, h->param.i_sps_id, &h->param );
+            x264_sps_init( h->sps, h->param.i_sps_id, &h->param, 0 );
         }
     }
 }
@@ -1001,7 +1001,7 @@ x264_t *x264_encoder_open( x264_param_t *param )
     }
 
     h->sps = &h->sps_array[0];
-    x264_sps_init( h->sps, h->param.i_sps_id, &h->param );
+    x264_sps_init( h->sps, h->param.i_sps_id, &h->param, 0 );
 
     h->pps = &h->pps_array[0];
     x264_pps_init( h->pps, h->param.i_sps_id, &h->param, h->sps );
@@ -1010,8 +1010,9 @@ x264_t *x264_encoder_open( x264_param_t *param )
     {
         /* used in subset sps */
         h->sps = &h->sps_array[1];
-        x264_sps_init( h->sps, ( h->param.i_sps_id + 1), &h->param );
-        /* MVC nal will refer this PPS */
+        x264_sps_init( h->sps, ( h->param.i_sps_id + 1), &h->param, 1 );
+
+        /* MVC nal will refer to this PPS */
         h->pps = &h->pps_array[1];
         x264_pps_init( h->pps, ( h->param.i_sps_id + 1), &h->param, h->sps );
     }
@@ -1450,7 +1451,7 @@ int x264_encoder_headers( x264_t *h, x264_nal_t **pp_nal, int *pi_nal )
 
     /* generate sequence parameters */
     x264_nal_start( h, NAL_SPS, NAL_PRIORITY_HIGHEST );
-    x264_sps_write( &h->out.bs, &h->sps_array[0] );
+    x264_sps_write( &h->out.bs, &h->sps_array[0], !h->param.b_mvc_flag );
     if( x264_nal_end( h ) )
         return -1;
 
@@ -1892,14 +1893,20 @@ static inline void x264_slice_init( x264_t *h, int i_nal_type, int i_global_qp )
     /* ------------------------ Create slice header  ----------------------- */
     if( i_nal_type == NAL_SLICE_IDR )
     {
-        x264_slice_header_init( h, &h->sh, h->sps, h->pps, h->i_idr_pic_id, h->i_frame_num, i_global_qp );
+        if( h->param.b_mvc_flag )
+            x264_slice_header_init( h, &h->sh, &h->sps_array[h->fenc->b_right_view_flag], &h->pps_array[h->fenc->b_right_view_flag],
+                                    h->i_idr_pic_id, h->i_frame_num, i_global_qp );
+        else
+            x264_slice_header_init( h, &h->sh, h->sps, h->pps, h->i_idr_pic_id, h->i_frame_num, i_global_qp );        
 
         /* alternate id */
         h->i_idr_pic_id ^= 1;
     }
     else
     {
-        x264_slice_header_init( h, &h->sh, h->sps, h->pps, -1, h->i_frame_num, i_global_qp );
+        if( h->param.b_mvc_flag )
+            x264_slice_header_init( h, &h->sh, &h->sps_array[h->fenc->b_right_view_flag], &h->pps_array[h->fenc->b_right_view_flag],
+                                   -1, h->i_frame_num, i_global_qp );
 
         h->sh.i_num_ref_idx_l0_active = h->i_ref[0] <= 0 ? 1 : h->i_ref[0];
         h->sh.i_num_ref_idx_l1_active = h->i_ref[1] <= 0 ? 1 : h->i_ref[1];
@@ -2749,7 +2756,7 @@ int     x264_encoder_encode( x264_t *h,
         {
             /* generate sequence parameters */
             x264_nal_start( h, NAL_SPS, NAL_PRIORITY_HIGHEST );
-            x264_sps_write( &h->out.bs, &h->sps_array[0] );
+            x264_sps_write( &h->out.bs, &h->sps_array[0], !h->param.b_mvc_flag );
             if( x264_nal_end( h ) )
                 return -1;
             overhead += h->out.nal[h->out.i_nal-1].i_payload + NALU_OVERHEAD;
@@ -2770,7 +2777,13 @@ int     x264_encoder_encode( x264_t *h,
                 if( x264_nal_end( h ) )
                 return -1;
 
-                /* Todo : Code subset SPS */
+                /* generate subset SPS parameters */
+                x264_nal_start( h, NAL_SUBSET_SPS, NAL_PRIORITY_HIGHEST );
+                x264_subset_sps_write( &h->out.bs, &h->sps_array[1] );
+                if( x264_nal_end( h ) )
+                    return -1;
+                overhead += h->out.nal[h->out.i_nal-1].i_payload + NALU_OVERHEAD;
+
                 /* generate picture parameters */
                 x264_nal_start( h, NAL_PPS, NAL_PRIORITY_HIGHEST );
                 x264_pps_write( &h->out.bs, &h->pps_array[1] );
