@@ -1707,9 +1707,11 @@ static int encode( x264_param_t *param, cli_opt_t *opt )
         if( !param->b_vfr_input )
             pic.i_pts = i_frame;
 
+        pic.b_right_view_flag = 0;
         /* Every alternate picture is of right view type, used by MVC */
         if( (i_frame & 1) && ( param->b_mvc_flag ) )
             pic.b_right_view_flag = 1;
+
         if( opt->i_pulldown && !param->b_vfr_input )
         {
             pic.i_pic_struct = pulldown->pattern[ i_frame % pulldown->mod ];

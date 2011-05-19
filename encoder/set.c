@@ -187,10 +187,14 @@ void x264_sps_init( x264_sps_t *sps, int i_id, x264_param_t *param, uint8_t b_mv
         }
     }
 
-    sps->b_vui = 1;
+    /* When MVC option is enabled, the VUI parameters will not be coded in SPS */
+    if( !param->b_mvc_flag )
+        sps->b_vui = 1;
+    else
+        sps->b_vui = 0;
 
-    /* In case of MVC, when the base layer is extracted, there will be gaps in frame num */    
-    if ( !b_mvc_sps_flag && param->b_mvc_flag )
+    /* In case of MVC, when the base layer (AVC) is extracted, there will be gaps in frame num */
+    if( !b_mvc_sps_flag && param->b_mvc_flag )
         sps->b_gaps_in_frame_num_value_allowed = 1;
     else
         sps->b_gaps_in_frame_num_value_allowed = 0;
@@ -280,8 +284,10 @@ void x264_sps_init( x264_sps_t *sps, int i_id, x264_param_t *param, uint8_t b_mv
     }
 }
 
-void x264_sps_write( bs_t *s, x264_sps_t *sps, uint8_t b_write_vui_params_flag )
+void x264_sps_write( bs_t *s, x264_sps_t *sps, uint8_t b_mvc_flag )
 {
+
+    uint8_t  b_subset_sps_flag = 0;
 
     bs_write( s, 8, sps->i_profile_idc );
     bs_write1( s, sps->b_constraint_set0 );
@@ -303,6 +309,9 @@ void x264_sps_write( bs_t *s, x264_sps_t *sps, uint8_t b_write_vui_params_flag )
         bs_write1( s, sps->b_qpprime_y_zero_transform_bypass );
         bs_write1( s, 0 ); // seq_scaling_matrix_present_flag
     }
+
+    if( sps->i_profile_idc == PROFILE_STEREO_HIGH_PROFILE )
+        b_subset_sps_flag = 1;
 
     bs_write_ue( s, sps->i_log2_max_frame_num - 4 );
     bs_write_ue( s, sps->i_poc_type );
@@ -339,6 +348,7 @@ void x264_sps_write( bs_t *s, x264_sps_t *sps, uint8_t b_write_vui_params_flag )
     }
 
     bs_write1( s, sps->b_vui );
+
     if( sps->b_vui )
     {
         bs_write1( s, sps->vui.b_aspect_ratio_info_present );
@@ -394,7 +404,9 @@ void x264_sps_write( bs_t *s, x264_sps_t *sps, uint8_t b_write_vui_params_flag )
             bs_write_ue( s, sps->vui.i_chroma_loc_bottom );
         }
 
-        if( b_write_vui_params_flag )
+        /* For MVC, the following VUI parameters will not be coded as part of SPS data (for all layers),
+           They will be coded as part of MVC VUI */
+        if( !b_mvc_flag )
         {
             bs_write1( s, sps->vui.b_timing_info_present );
             if( sps->vui.b_timing_info_present )
@@ -429,6 +441,7 @@ void x264_sps_write( bs_t *s, x264_sps_t *sps, uint8_t b_write_vui_params_flag )
 
             bs_write1( s, sps->vui.b_pic_struct_present );
         }
+
         bs_write1( s, sps->vui.b_bitstream_restriction );
         if( sps->vui.b_bitstream_restriction )
         {
@@ -442,8 +455,12 @@ void x264_sps_write( bs_t *s, x264_sps_t *sps, uint8_t b_write_vui_params_flag )
         }
     }
 
-    bs_rbsp_trailing( s );
-    bs_flush( s );
+    /* End the NAL only if it is a AVC SPS */
+    if( !b_subset_sps_flag )
+    {
+        bs_rbsp_trailing( s );
+        bs_flush( s );
+    }
 }
 
 void x264_subset_sps_write( bs_t *q, x264_sps_t *sps )
@@ -452,8 +469,13 @@ void x264_subset_sps_write( bs_t *q, x264_sps_t *sps )
     /* stereo MVC */
     uint8_t num_views = 2;
 
+    /* Following syntax elements are not supported */
+    sps->vui.b_pic_struct_present = 0;
+    sps->vui.b_nal_hrd_parameters_present = 0;
+    sps->vui.b_vcl_hrd_parameters_present = 0;
+
     /* Write the AVC SPS first */
-    x264_sps_write( q, sps, 0 );
+    x264_sps_write( q, sps, 1 );
 
     /* bit_equal_to_one */
     bs_write1( q, 1 );
@@ -485,7 +507,7 @@ void x264_subset_sps_write( bs_t *q, x264_sps_t *sps )
     bs_write_ue( q, 1 );  //applicable_op_num_views_minus1
 
     /* MVC VUI parameters present flag */
-    bs_write1( q, 1 );
+    bs_write1( q, 0 );
 
     /* MVC VUI parameters */
     bs_write_ue( q, 0 );  //vui_mvc_num_ops_minus1 (only EL)
@@ -524,11 +546,14 @@ void x264_subset_sps_write( bs_t *q, x264_sps_t *sps )
 
     if( sps->vui.b_nal_hrd_parameters_present || sps->vui.b_vcl_hrd_parameters_present )
         bs_write1( q, 0 );   /* low_delay_hrd_flag */
-        
+
     bs_write1( q, sps->vui.b_pic_struct_present );
 
     /* additional_extension2_flag */
     bs_write1( q, 0 );
+
+    bs_rbsp_trailing( q );
+    bs_flush( q );
 
 }
 
@@ -675,7 +700,7 @@ void x264_sei_view_scalability_write( x264_t *h, bs_t *s, int num_views )
     bs_realign( &q );
     bs_write_ue( &q, ( num_op_points - 1 ) ); //number of operation points minus 1
 
-    for ( int i = 0; i <  ( num_op_points - 1 ); i++ )
+    for ( int i = 0; i <= num_op_points; i++ )
     {
         bs_write_ue( &q, i ); //operation point id
         bs_write( &q, 5, i ); // Lower value for high priority (left view) frames
