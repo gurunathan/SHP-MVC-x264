@@ -469,6 +469,9 @@ void x264_subset_sps_write( bs_t *q, x264_sps_t *sps )
     /* stereo MVC */
     uint8_t num_views = 2;
 
+    /* mvc VUI parameters present flag */
+    uint8_t b_mvc_vui_parameters_present = 0;
+
     /* Following syntax elements are not supported */
     sps->vui.b_pic_struct_present = 0;
     sps->vui.b_nal_hrd_parameters_present = 0;
@@ -485,6 +488,7 @@ void x264_subset_sps_write( bs_t *q, x264_sps_t *sps )
     for( int j = 0; j < num_views; j++ )
         bs_write_ue( q, j ); //view_id
 
+    /* Below syntax elements are applicable only for the right view */
     bs_write_ue( q, 1 ); //num_anchor_ref_l0
     bs_write_ue( q, 0 ); //anchor_ref_l0[view_id][anchor_ref]
     bs_write_ue( q, 1 ); //num_anchor_ref_l1
@@ -507,47 +511,50 @@ void x264_subset_sps_write( bs_t *q, x264_sps_t *sps )
     bs_write_ue( q, 1 );  //applicable_op_num_views_minus1
 
     /* MVC VUI parameters present flag */
-    bs_write1( q, 0 );
+    bs_write1( q, b_mvc_vui_parameters_present );
 
-    /* MVC VUI parameters */
-    bs_write_ue( q, 0 );  //vui_mvc_num_ops_minus1 (only EL)
-    bs_write( q, 3, 0 );  //temporal id for EL
-    bs_write_ue( q, 0 );  //vui_mvc_num_target_output_views_minus1
-    for( int j = 0; j < num_views; j++ )
-        bs_write_ue( q, j ); //vui_mvc_view_id
-
-    bs_write1( q, sps->vui.b_timing_info_present ); //vui_mvc_timing_info_present_flag
-    if( sps->vui.b_timing_info_present )
+    if( b_mvc_vui_parameters_present )
     {
-        bs_write32( q, sps->vui.i_num_units_in_tick );//vui_mvc_num_units_in_tick
-        bs_write32( q, sps->vui.i_time_scale ); //vui_mvc_time_scale
-        bs_write1( q, sps->vui.b_fixed_frame_rate ); //vui_mvc_fixed_frame_rate_flag
+        /* MVC VUI parameters */
+        bs_write_ue( q, 0 );  //vui_mvc_num_ops_minus1 (only EL)
+        bs_write( q, 3, 0 );  //temporal id for EL
+        bs_write_ue( q, 0 );  //vui_mvc_num_target_output_views_minus1
+        for( int j = 0; j < num_views; j++ )
+            bs_write_ue( q, j ); //vui_mvc_view_id
+
+        bs_write1( q, sps->vui.b_timing_info_present ); //vui_mvc_timing_info_present_flag
+        if( sps->vui.b_timing_info_present )
+        {
+            bs_write32( q, sps->vui.i_num_units_in_tick );//vui_mvc_num_units_in_tick
+            bs_write32( q, sps->vui.i_time_scale ); //vui_mvc_time_scale
+            bs_write1( q, sps->vui.b_fixed_frame_rate ); //vui_mvc_fixed_frame_rate_flag
+        }
+
+        bs_write1( q, sps->vui.b_nal_hrd_parameters_present );
+        if( sps->vui.b_nal_hrd_parameters_present )
+        {
+            bs_write_ue( q, sps->vui.hrd.i_cpb_cnt - 1 );
+            bs_write( q, 4, sps->vui.hrd.i_bit_rate_scale );
+            bs_write( q, 4, sps->vui.hrd.i_cpb_size_scale );
+
+            bs_write_ue( q, sps->vui.hrd.i_bit_rate_value - 1 );
+            bs_write_ue( q, sps->vui.hrd.i_cpb_size_value - 1 );
+
+            bs_write1( q, sps->vui.hrd.b_cbr_hrd );
+
+            bs_write( q, 5, sps->vui.hrd.i_initial_cpb_removal_delay_length - 1 );
+            bs_write( q, 5, sps->vui.hrd.i_cpb_removal_delay_length - 1 );
+            bs_write( q, 5, sps->vui.hrd.i_dpb_output_delay_length - 1 );
+            bs_write( q, 5, sps->vui.hrd.i_time_offset_length );
+        }
+
+        bs_write1( q, sps->vui.b_vcl_hrd_parameters_present );
+
+        if( sps->vui.b_nal_hrd_parameters_present || sps->vui.b_vcl_hrd_parameters_present )
+            bs_write1( q, 0 );   /* low_delay_hrd_flag */
+
+        bs_write1( q, sps->vui.b_pic_struct_present );
     }
-
-    bs_write1( q, sps->vui.b_nal_hrd_parameters_present );
-    if( sps->vui.b_nal_hrd_parameters_present )
-    {
-        bs_write_ue( q, sps->vui.hrd.i_cpb_cnt - 1 );
-        bs_write( q, 4, sps->vui.hrd.i_bit_rate_scale );
-        bs_write( q, 4, sps->vui.hrd.i_cpb_size_scale );
-
-        bs_write_ue( q, sps->vui.hrd.i_bit_rate_value - 1 );
-        bs_write_ue( q, sps->vui.hrd.i_cpb_size_value - 1 );
-
-        bs_write1( q, sps->vui.hrd.b_cbr_hrd );
-
-        bs_write( q, 5, sps->vui.hrd.i_initial_cpb_removal_delay_length - 1 );
-        bs_write( q, 5, sps->vui.hrd.i_cpb_removal_delay_length - 1 );
-        bs_write( q, 5, sps->vui.hrd.i_dpb_output_delay_length - 1 );
-        bs_write( q, 5, sps->vui.hrd.i_time_offset_length );
-    }
-
-    bs_write1( q, sps->vui.b_vcl_hrd_parameters_present );
-
-    if( sps->vui.b_nal_hrd_parameters_present || sps->vui.b_vcl_hrd_parameters_present )
-        bs_write1( q, 0 );   /* low_delay_hrd_flag */
-
-    bs_write1( q, sps->vui.b_pic_struct_present );
 
     /* additional_extension2_flag */
     bs_write1( q, 0 );
@@ -700,7 +707,7 @@ void x264_sei_view_scalability_write( x264_t *h, bs_t *s, int num_views )
     bs_realign( &q );
     bs_write_ue( &q, ( num_op_points - 1 ) ); //number of operation points minus 1
 
-    for ( int i = 0; i <= num_op_points; i++ )
+    for ( int i = 0; i < num_op_points; i++ )
     {
         bs_write_ue( &q, i ); //operation point id
         bs_write( &q, 5, i ); // Lower value for high priority (left view) frames

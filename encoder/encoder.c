@@ -1355,11 +1355,22 @@ static void x264_mvc_nal_start( x264_t *h, int i_type, int i_ref_idc )
     nal->i_ref_idc           = i_ref_idc;
     nal->i_type              = i_type;
     nal->b_long_startcode    = 1;
-    nal->st_mvc_nal.b_non_idr_flag     = ( ( h->fenc->i_type == X264_TYPE_IDR ) ? 0 : 1 );
-    nal->st_mvc_nal.i_priority_id      = ( ( h->fenc->i_type == X264_TYPE_IDR ) ? 0 : 1 ); //Lower value implies high priority
     nal->st_mvc_nal.i_view_id          = 1;
     nal->st_mvc_nal.i_temporal_id      = 0; //temporal id will be reset per view
-    nal->st_mvc_nal.b_anchor_pic_flag  = ( ( h->fenc->i_type == X264_TYPE_IDR ) ? 1 : 0 ); // Todo : ATM it will be on only for IDR, need to re-look
+    nal->st_mvc_nal.b_non_idr_flag     = ( ( h->fenc->i_type == X264_TYPE_IDR ) ? 0 : 1 );
+    /* Todo :
+	** (i).If the reference picture is a left view picture & if it is a IDR picture
+	** (ii). Open GOP option is not selected
+	** then this right view picture is an anchor picture!!!
+	*/
+    nal->st_mvc_nal.b_anchor_pic_flag  = ( ( h->fenc->i_type == X264_TYPE_IDR ) ? 1 : 0 );
+    /* High priority for the anchor picture or when the current picture is of IDR type */
+    nal->st_mvc_nal.i_priority_id      = ( ( ( h->fenc->i_type == X264_TYPE_IDR ) || ( nal->st_mvc_nal.b_anchor_pic_flag ) ) ? 0 : 1 ); //Lower value -> high priority
+    /* Todo :
+	** If any one of the reference picture is a left view picture (DPB has left view picture)
+	** After ME, some MB's are referring to this left view picture
+	** then inter-view flag will be ON !!!
+	*/
     nal->st_mvc_nal.b_inter_view_flag  = ( ( ( h->fenc->i_type == X264_TYPE_IDR ) || ( h->fenc->i_type == X264_TYPE_I ) ) ? 0 : 1 );
     nal->i_payload= 0;
     nal->p_payload= &h->out.p_bitstream[bs_pos( &h->out.bs ) / 8];
@@ -2774,7 +2785,7 @@ int     x264_encoder_encode( x264_t *h,
             overhead += h->out.nal[h->out.i_nal-1].i_payload + NALU_OVERHEAD;
 
             /* check whether 3D MVC support option is enabled */
-            if( h->param.b_mvc_flag )
+            if( h->param.b_mvc_flag && h->fenc->b_right_view_flag )
             {
                 x264_nal_start( h, NAL_SEI, NAL_PRIORITY_DISPOSABLE );
                 /* write view scalability SEI */
