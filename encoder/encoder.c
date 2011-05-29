@@ -1499,7 +1499,7 @@ static inline void x264_reference_check_reorder( x264_t *h )
     /* The reorder check doesn't check for missing frames, so just
      * force a reorder if one of the reference list is corrupt. */
     for( int i = 0; h->frames.reference[i]; i++ )
-        if( h->frames.reference[i]->b_corrupt )
+        if( h->frames.reference[i]->b_corrupt || h->b_mvc_list_reorder_flag[0] )
         {
             h->b_ref_reorder[0] = 1;
             return;
@@ -1651,38 +1651,106 @@ static inline int x264_reference_distance( x264_t *h, x264_frame_t *frame )
         return abs(h->fenc->i_frame - frame->i_frame);
 }
 
+/* Constructs the DPB before encoding the current frame */
 static inline void x264_reference_build_list( x264_t *h, int i_poc )
 {
     int b_ok;
+    /* MVC re-ordering flag for list0 */
+    h->b_mvc_list_reorder_flag[0] = 0;
+    /* MVC re-ordering flag for list1 */
+    h->b_mvc_list_reorder_flag[1] = 0;
 
     /* build ref list 0/1 */
+    /* h->i_ref[list] contains the count for the no of reference pictures for the list */
     h->mb.pic.i_fref[0] = h->i_ref[0] = 0;
     h->mb.pic.i_fref[1] = h->i_ref[1] = 0;
     if( h->sh.i_type == SLICE_TYPE_I )
         return;
+#if defined(MVC_DEBUG_PRINT)
+    printf("Current POC = %d\n",i_poc);
+#endif
 
+#if 0
+    /*
+    ** Normal AVC prediction structure
+    */
+    /* Run through the DPB and constuct both the lists */
     for( int i = 0; h->frames.reference[i]; i++ )
     {
         if( h->frames.reference[i]->b_corrupt )
             continue;
+        /* Reference frame's POC is less than current pic POC, put the pic in List0 */
         if( h->frames.reference[i]->i_poc < i_poc )
             h->fref[0][h->i_ref[0]++] = h->frames.reference[i];
+        /* Reference frame's POC is greater than current pic POC, put the pic in List1 */
         else if( h->frames.reference[i]->i_poc > i_poc )
             h->fref[1][h->i_ref[1]++] = h->frames.reference[i];
     }
 
+#else
+    /*
+    ** AVC with the following prediction structure
+    ** I0  P0  P1  P2  P3  P4  P5  P6  P7  P8  P9  P10
+    **  L   R   L  R   L   R   L   R   L   R   L   R
+    **  P0 -> I0
+    **  P1 -> I0
+    **  P2 -> P1,P0
+    **  P3 -> P1
+    **  P4 -> P3,P2 and so on
+    */
+    /*
+    ** For MVC,
+    ** Left view pictures should refer to left view pictures only
+    ** Right view pictures will refer to right view pictures and the just
+    ** previous left view picture (only)
+    */
+    /* Run through the DPB and constuct both the lists */
+    for( int i = 0; h->frames.reference[i]; i++ )
+    {
+        if( h->frames.reference[i]->b_corrupt )
+            continue;
+        /* Reference frame's POC is less than current pic POC, put the pic in List0 */
+        if( h->frames.reference[i]->i_poc < i_poc )
+        {
+            /* Current frame is left view type & reference picture is of right view type */
+            if( ( !( i_poc & 3 ) ) && ( h->frames.reference[i]->i_poc & 3 ) )
+                h->b_mvc_list_reorder_flag[0] = 1;
+
+            /* Current frame is right view type & reference picture is of left view type & not immediate previous picture*/
+            /* Todo: POC difference calculation needs to be updated for field pictures */
+            else if( ( i_poc & 3 ) && ( !( h->frames.reference[i]->i_poc & 3 ) ) &&
+                   ( ( i_poc - h->frames.reference[i]->i_poc != 2 ) ) )
+                h->b_mvc_list_reorder_flag[0] = 1;
+
+            /* Add the frame in to list0 */
+            else
+                h->fref[0][h->i_ref[0]++] = h->frames.reference[i];
+        }
+        /* Reference frame's POC is greater than current pic POC, put the pic in List1 */
+        else if( h->frames.reference[i]->i_poc > i_poc )
+            h->fref[1][h->i_ref[1]++] = h->frames.reference[i];
+    }
+#endif
+
     /* Order reference lists by distance from the current frame. */
     for( int list = 0; list < 2; list++ )
     {
+        /*
+        ** h->fref[list][0] : Will contain 0th index in the DPB for the corresponding list
+        ** i.e. closest temporal picture(s) for list 0 & list 1.
+        */
         h->fref_nearest[list] = h->fref[list][0];
         do
         {
             b_ok = 1;
             for( int i = 0; i < h->i_ref[list] - 1; i++ )
             {
+                /* Update the 'nearest' picture index if required */
                 if( list ? h->fref[list][i+1]->i_poc < h->fref_nearest[list]->i_poc
                          : h->fref[list][i+1]->i_poc > h->fref_nearest[list]->i_poc )
                     h->fref_nearest[list] = h->fref[list][i+1];
+
+                /* Shuffle the pictures in the DPB (if required) */
                 if( x264_reference_distance( h, h->fref[list][i] ) > x264_reference_distance( h, h->fref[list][i+1] ) )
                 {
                     XCHG( x264_frame_t*, h->fref[list][i], h->fref[list][i+1] );
@@ -1693,6 +1761,10 @@ static inline void x264_reference_build_list( x264_t *h, int i_poc )
         } while( !b_ok );
     }
 
+    /* remove the oldest picture(s) from DPB.
+    ** remember, list 1 contain pictures that have higher POC than current POC.
+    ** So, oldest picture(s) will be removed only from list0
+    */
     if( h->sh.i_mmco_remove_from_end )
         for( int i = h->i_ref[0]-1; i >= h->i_ref[0] - h->sh.i_mmco_remove_from_end; i-- )
         {
@@ -1750,6 +1822,14 @@ static inline void x264_reference_build_list( x264_t *h, int i_poc )
     assert( h->i_ref[0] + h->i_ref[1] <= X264_REF_MAX );
     h->mb.pic.i_fref[0] = h->i_ref[0];
     h->mb.pic.i_fref[1] = h->i_ref[1];
+
+#if defined(MVC_DEBUG_PRINT)
+    /* Get the POC of the current list*/
+    for( int i = 0; i < h->i_ref[0]; i++ )
+    {
+        printf("Reference POC = %d\n",h->fref[0][i]->i_poc);
+    }
+#endif
 }
 
 static void x264_fdec_filter_row( x264_t *h, int mb_y, int b_inloop )
@@ -1827,8 +1907,10 @@ static void x264_fdec_filter_row( x264_t *h, int mb_y, int b_inloop )
     }
 }
 
+/* Push the recently encoded frame to DPB */
 static inline int x264_reference_update( x264_t *h )
 {
+    /* Throw away the recently encoded frame as this is not going to be used as reference */
     if( !h->fdec->b_kept_as_ref )
     {
         if( h->i_thread_frames > 1 )
@@ -1841,6 +1923,7 @@ static inline int x264_reference_update( x264_t *h )
         return 0;
     }
 
+    /* Keep the recently encoded frame */
     /* apply mmco from previous frame. */
     for( int i = 0; i < h->sh.i_mmco_command_count; i++ )
         for( int j = 0; h->frames.reference[j]; j++ )
@@ -1857,6 +1940,7 @@ static inline int x264_reference_update( x264_t *h )
     return 0;
 }
 
+/* Flushes the DPB (used with IDR) */
 static inline void x264_reference_reset( x264_t *h )
 {
     while( h->frames.reference[0] )
@@ -1865,6 +1949,7 @@ static inline void x264_reference_reset( x264_t *h )
     h->fenc->i_poc = 0;
 }
 
+/* Used with P frames */
 static inline void x264_reference_hierarchy_reset( x264_t *h )
 {
     int ref;

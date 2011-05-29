@@ -849,6 +849,7 @@ struct x264_t
     x264_quant_function_t quantf;
     x264_deblock_function_t loopf;
     x264_bitstream_function_t bsf;
+    int b_mvc_list_reorder_flag[2]; /* List re-ordering for MVC */
 
 #if HAVE_VISUALIZE
     struct visualize_t *visualize;
