@@ -66,6 +66,7 @@ enum nal_unit_type_e
     NAL_FILLER        = 12,
     NAL_SPS_EXTENSION = 13,
     NAL_SUBSET_SPS    = 15,
+    NAL_VIEW_AND_DEPENDENCY_REP = 18,
     NAL_MVC_SLICE     = 20,
     /* ref_idc == 0 for 6,9,10,11,12 */
 };

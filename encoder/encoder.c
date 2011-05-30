@@ -2973,6 +2973,15 @@ int     x264_encoder_encode( x264_t *h,
         overhead += h->out.nal[h->out.i_nal-1].i_payload + NALU_OVERHEAD - (h->param.b_annexb && h->out.i_nal-1);
     }
 
+    /* As required for transportation of MVC stream over H.222 */
+    if( h->param.b_mvc_flag && h->fenc->b_right_view_flag )
+    {
+        x264_nal_start( h, NAL_VIEW_AND_DEPENDENCY_REP, NAL_PRIORITY_DISPOSABLE );
+        if( x264_nal_end( h ) )
+            return -1;
+        overhead += h->out.nal[h->out.i_nal-1].i_payload + NALU_OVERHEAD - (h->param.b_annexb && h->out.i_nal-1);
+    }
+
     if( h->fenc->b_keyframe && h->param.b_intra_refresh )
         h->i_cpb_delay_pir_offset = h->fenc->i_cpb_delay;
 
