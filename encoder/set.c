@@ -744,8 +744,8 @@ void x264_sei_view_scalability_write( x264_t *h, bs_t *s, int num_views )
 
         if ( view_dep_info_present_flag [i] )
             bs_write_ue( &q, 0 );   //number of directly dependent views, Todo: code this based on view_id
-        else 
-            bs_write_ue( &q, 0 );   //view_dep_info_src_op_id
+        else
+        bs_write_ue( &q, 0 );   //view_dep_info_src_op_id
 
         if ( param_sets_info_present_flag [i] )
         {

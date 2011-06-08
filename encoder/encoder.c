@@ -39,6 +39,8 @@
 
 //#define DEBUG_MB_TYPE
 
+//#define MVC_DEBUG_PRINT
+
 #define bs_write_ue bs_write_ue_big
 
 static int x264_encoder_frame_end( x264_t *h, x264_t *thread_current,
@@ -153,29 +155,53 @@ static void x264_slice_header_init( x264_t *h, x264_slice_header_t *sh,
     sh->b_ref_pic_list_reordering[0] = h->b_ref_reorder[0];
     sh->b_ref_pic_list_reordering[1] = h->b_ref_reorder[1];
 
-    /* If the ref list isn't in the default order, construct reordering header */
-    for( int list = 0; list < 2; list++ )
+    /* AVC case */
+    if( !h->param.b_mvc_flag )
     {
-        if( sh->b_ref_pic_list_reordering[list] )
+        /* If the ref list isn't in the default order, construct reordering header */
+        for( int list = 0; list < 2; list++ )
         {
-            int pred_frame_num = i_frame;
-            for( int i = 0; i < h->i_ref[list]; i++,list0_reorder_cnt++ )
+            if( sh->b_ref_pic_list_reordering[list] )
             {
-                int diff = h->fref[list][i]->i_frame_num - pred_frame_num;
-                sh->ref_pic_list_order[list][i].idc = ( diff > 0 );
-                sh->ref_pic_list_order[list][i].arg = (abs(diff) - 1) & ((1 << sps->i_log2_max_frame_num) - 1);
-                pred_frame_num = h->fref[list][i]->i_frame_num;
+                int pred_frame_num = i_frame;
+                for( int i = 0; i < h->i_ref[list]; i++,list0_reorder_cnt++ )
+                {
+                    int diff = h->fref[list][i]->i_frame_num - pred_frame_num;
+                    sh->ref_pic_list_order[list][i].idc = ( diff > 0 );
+                    sh->ref_pic_list_order[list][i].arg = (abs(diff) - 1) & ((1 << sps->i_log2_max_frame_num) - 1);
+                    pred_frame_num = h->fref[list][i]->i_frame_num;
+                }
             }
         }
     }
 
     /*
+    ** When MVC is enabled, the presentation frame num wll be same for both views
+    */
+    else
+    {
+        /* If the ref list isn't in the default order, construct reordering header */
+        for( int list = 0; list < 2; list++ )
+        {
+            if( sh->b_ref_pic_list_reordering[list] )
+            {
+                int pred_frame_num = i_frame/2;
+                for( int i = 0; i < h->i_ref[list]; i++,list0_reorder_cnt++ )
+                {
+                    int diff = h->fref[list][i]->i_frame_num/2 - pred_frame_num;
+                    sh->ref_pic_list_order[list][i].idc = ( diff > 0 );
+                    sh->ref_pic_list_order[list][i].arg = (abs(diff) - 1) & ((1 << sps->i_log2_max_frame_num) - 1);
+                    pred_frame_num = h->fref[list][i]->i_frame_num/2;
+                }
+            }
+        }
+    }
+    /*
     ** For MVC right view picture there will be inter-view prediction.
     ** The inter-view prediction frame(s) has to be appended at the end of
     ** temporal reference frame list.
     */
-    /* Todo : Inter-view prediction in non-anchor frames */
-    if( h->param.b_mvc_flag && h->fenc->b_right_view_flag && ( h->fenc->i_frame - h->frames.i_last_idr == 0 ) )
+    if( h->param.b_mvc_flag && h->fenc->b_right_view_flag && h->b_mvc_list_reorder_flag[0]  )
     {
         /* List re-ordering includes inter-view pictures also */
         sh->b_ref_pic_list_reordering[0] |= h->b_mvc_list_reorder_flag[0];
@@ -326,7 +352,7 @@ static void x264_slice_header_write( bs_t *s, x264_slice_header_t *sh, int i_nal
         }
         else
         {
-            bs_write1( s, sh->i_mmco_command_count > 0 ); /* adaptive_ref_pic_marking_mode_flag */
+            bs_write1( s, ( ( sh->i_mmco_command_count > 0) | sh->i_mmco5_command_enabled ) ); /* adaptive_ref_pic_marking_mode_flag */
             if( sh->i_mmco_command_count > 0 )
             {
                 for( int i = 0; i < sh->i_mmco_command_count; i++ )
@@ -334,6 +360,11 @@ static void x264_slice_header_write( bs_t *s, x264_slice_header_t *sh, int i_nal
                     bs_write_ue( s, 1 ); /* mark short term ref as unused */
                     bs_write_ue( s, sh->mmco[i].i_difference_of_pic_nums - 1 );
                 }
+                bs_write_ue( s, 0 ); /* end command list */
+            }
+            if( sh->i_mmco5_command_enabled )
+            {
+                bs_write_ue( s, 5 ); /* mark all reference pictures as unused for reference */
                 bs_write_ue( s, 0 ); /* end command list */
             }
         }
@@ -639,6 +670,20 @@ static int x264_validate_parameters( x264_t *h )
 
     h->param.i_frame_reference = x264_clip3( h->param.i_frame_reference, 1, X264_REF_MAX );
     h->param.i_dpb_size = x264_clip3( h->param.i_dpb_size, 1, X264_REF_MAX );
+
+    /*
+    ** For MVC DPB includes both left view & right view DPBs.
+    ** Theoritically, Total DPB size = Left view DPB + Right view DPB.
+    ** Since the DPB contains both view components, no of reference pictures
+    ** were doubled. Note: This is for the internal operations of x264 only. Anyway
+    ** SPS and subset SPS will code the no of ref frames as i_frame_reference.
+    */
+    if( h->param.b_mvc_flag )
+    {
+        h->param.i_frame_reference = ( h->param.i_frame_reference << 1 );
+        h->param.i_dpb_size = ( h->param.i_dpb_size << 1 );
+    }
+
     if( h->param.i_scenecut_threshold < 0 )
         h->param.i_scenecut_threshold = 0;
     if( !h->param.analyse.i_subpel_refine && h->param.analyse.i_direct_mv_pred > X264_DIRECT_PRED_SPATIAL )
@@ -1402,8 +1447,13 @@ static void x264_mvc_nal_start( x264_t *h, int i_type, int i_ref_idc )
     ** After ME, some MB's are referring to this left view picture
     ** then inter-view flag will be ON !!!
     */
-    /* Todo : Inter-view prediction in non-anchor pictures */
-    nal->st_mvc_nal.b_inter_view_flag  = ( nal->st_mvc_nal.b_anchor_pic_flag ) ? 1 : 0 ;
+    nal->st_mvc_nal.b_inter_view_flag  = ( ( ( h->fenc->i_type == X264_TYPE_IDR ) || ( h->fenc->i_type == X264_TYPE_I ) ) ? 0 : 1 );
+
+    /*
+    ** Send MMCO5 command for all the anchor pictures to reset POC
+    */
+    if( nal->st_mvc_nal.b_anchor_pic_flag )
+        h->sh.i_mmco5_command_enabled = 1;
     nal->i_payload= 0;
     nal->p_payload= &h->out.p_bitstream[bs_pos( &h->out.bs ) / 8];
 }
@@ -1537,7 +1587,7 @@ static inline void x264_reference_check_reorder( x264_t *h )
             return;
         }
     for( int list = 0; list <= (h->sh.i_type == SLICE_TYPE_B); list++ )
-        for( int i = 0; i < h->i_ref[list] - 1; i++ )
+        for( int i = h->num_inter_view_pics; i < h->i_ref[list] - 1; i++ )
         {
             int framenum_diff = h->fref[list][i+1]->i_frame_num - h->fref[list][i]->i_frame_num;
             int poc_diff = h->fref[list][i+1]->i_poc - h->fref[list][i]->i_poc;
@@ -1689,8 +1739,11 @@ static inline void x264_reference_build_list( x264_t *h, int i_poc )
     int b_ok;
     /* MVC re-ordering flag for list0 */
     h->b_mvc_list_reorder_flag[0] = 0;
+    h->b_ref_reorder[0] = 0;
     /* MVC re-ordering flag for list1 */
     h->b_mvc_list_reorder_flag[1] = 0;
+    h->num_inter_view_pics = 0;
+
 
     /* build ref list 0/1 */
     /* h->i_ref[list] contains the count for the no of reference pictures for the list */
@@ -1742,11 +1795,18 @@ static inline void x264_reference_build_list( x264_t *h, int i_poc )
                 if( !( i_poc & 3 ) && ( h->frames.reference[i]->i_poc & 3 ) )
                     continue;
 
+                /* Current frame is right view type & reference picture is of left view type and captured at same time instant*/
+                else if( ( i_poc & 3 ) && !( h->frames.reference[i]->i_poc & 3) && ( i_poc - h->frames.reference[i]->i_poc == 2 ))
+                {
+                    h->fref[0][h->i_ref[0]++] = h->frames.reference[i];
+                    ++h->num_inter_view_pics;
+                }
+
                 /* Current frame is right view type & reference picture is of left view type */
                 else if( ( i_poc & 3 ) && !( h->frames.reference[i]->i_poc & 3) )
                     continue;
 
-                /* Add the frame in to list0 */
+                /* Same view picture, add the frame in to list0 */
                 else
                     h->fref[0][h->i_ref[0]++] = h->frames.reference[i];
             }
@@ -1806,23 +1866,15 @@ static inline void x264_reference_build_list( x264_t *h, int i_poc )
     ** Construct Inter view DPB & append with the temporal DPB.
     ** For MVC, right view picture(s) could refer to corresponding left view picture
     */
-    /* Todo : Inter-view prediction in non-anchor pictures also */
-    if( h->param.b_mvc_flag && h->fenc->b_right_view_flag && ( ( h->fenc->i_frame - h->frames.i_last_idr ) == 1 ))
+    if( h->param.b_mvc_flag && h->fenc->b_right_view_flag )
     {
-        for( int i = 0; h->frames.reference[i]; i++ )
-        {
-            /* Find & add the left view picture */
-            if(  i_poc - h->frames.reference[i]->i_poc == 2 )
-            {
-                h->fref[0][h->i_ref[0]++] = h->frames.reference[i];
-                h->b_mvc_list_reorder_flag[0] = 1;
-            }
-        }
+        h->b_mvc_list_reorder_flag[0] = 1;
     }
 
     assert(h->i_ref[0] != 0 );
 #if defined(MVC_DEBUG_PRINT)
-    printf("No of reference frames = %d\n",h->i_ref[0]);
+    printf("No of reference frames = %d\t",h->i_ref[0]);
+    printf("Temporal reorder = %d\n",h->b_ref_reorder[0]);
 #endif
 
     /*
@@ -2754,6 +2806,7 @@ int     x264_encoder_encode( x264_t *h,
             h->frames.i_last_idr = h->fenc->i_frame;
         }
     }
+    h->sh.i_mmco5_command_enabled = 0;
     h->sh.i_mmco_command_count =
     h->sh.i_mmco_remove_from_end = 0;
     h->b_ref_reorder[0] =

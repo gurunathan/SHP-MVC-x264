@@ -358,6 +358,7 @@ typedef struct
 
     int i_mmco_remove_from_end;
     int i_mmco_command_count;
+    int i_mmco5_command_enabled; /* Whether MMCO 5 is enabled or not, used in MVC for anchor pics */
     struct /* struct for future expansion */
     {
         int i_difference_of_pic_nums;
@@ -849,6 +850,7 @@ struct x264_t
     x264_quant_function_t quantf;
     x264_deblock_function_t loopf;
     x264_bitstream_function_t bsf;
+    int num_inter_view_pics; /* Number of inter view pictures */
     int b_mvc_list_reorder_flag[2]; /* List re-ordering for MVC */
 
 #if HAVE_VISUALIZE
