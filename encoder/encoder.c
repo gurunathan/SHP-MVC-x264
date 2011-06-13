@@ -278,6 +278,10 @@ static void x264_slice_header_write( bs_t *s, x264_slice_header_t *sh, int i_nal
         bs_write1( s, sh->b_num_ref_idx_override );
         if( sh->b_num_ref_idx_override )
         {
+#if defined(MVC_DEBUG_PRINT)
+            printf("override\n");
+            printf("ref_idx_override = %d\n",sh->i_num_ref_idx_l0_active);
+#endif
             bs_write_ue( s, sh->i_num_ref_idx_l0_active - 1 );
             if( sh->i_type == SLICE_TYPE_B )
                 bs_write_ue( s, sh->i_num_ref_idx_l1_active - 1 );
@@ -673,15 +677,15 @@ static int x264_validate_parameters( x264_t *h )
 
     /*
     ** For MVC DPB includes both left view & right view DPBs.
-    ** Theoritically, Total DPB size = Left view DPB + Right view DPB.
+    ** Theoretically, Total DPB size = Left view DPB + Right view DPB.
     ** Since the DPB contains both view components, no of reference pictures
     ** were doubled. Note: This is for the internal operations of x264 only. Anyway
     ** SPS and subset SPS will code the no of ref frames as i_frame_reference.
     */
     if( h->param.b_mvc_flag )
     {
-        h->param.i_frame_reference = ( h->param.i_frame_reference << 1 );
-        h->param.i_dpb_size = ( h->param.i_dpb_size << 1 );
+        h->param.i_frame_reference <<= 1;
+        h->param.i_dpb_size <<= 1;
     }
 
     if( h->param.i_scenecut_threshold < 0 )
@@ -1632,6 +1636,7 @@ int x264_weighted_reference_duplicate( x264_t *h, int i_ref, const x264_weight_t
 
     /* shift the frames to make space for the dupe. */
     h->b_ref_reorder[0] = 1;
+
     if( h->i_ref[0] < X264_REF_MAX )
         ++h->i_ref[0];
     h->fref[0][X264_REF_MAX-1] = NULL;

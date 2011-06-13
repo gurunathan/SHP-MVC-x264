@@ -494,7 +494,9 @@ void x264_subset_sps_write( bs_t *q, x264_sps_t *sps )
     bs_write_ue( q, 1 ); //num_anchor_ref_l1
     bs_write_ue( q, 0 ); //anchor_ref_l1[view_id][anchor_ref]
 
-    bs_write_ue( q, 1 ); //num_non_anchor_ref_l0
+    /* Todo: check if --weightp 2 option is enabled,
+    ** If enabled, num_non_anchor_ref_l0 = 2 if not num_non_anchor_ref_l0 = 1 */
+    bs_write_ue( q, 2 ); //num_non_anchor_ref_l0
     bs_write_ue( q, 0 ); //non_anchor_ref_l0[view_id][non_anchor_ref]
     bs_write_ue( q, 1 ); //num_non_anchor_ref_l1
     bs_write_ue( q, 0 ); //non_anchor_ref_l1[view_id][anchor_ref]
