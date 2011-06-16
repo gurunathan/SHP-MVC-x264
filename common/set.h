@@ -157,6 +157,9 @@ typedef struct
 
     int b_qpprime_y_zero_transform_bypass;
 
+    /* Number of non-anchor pictures in List0, used by MVC */
+    int i_num_non_anchor_ref_l0;
+
 } x264_sps_t;
 
 typedef struct

@@ -376,6 +376,8 @@ typedef struct
     int i_disable_deblocking_filter_idc;
     int i_alpha_c0_offset;
     int i_beta_offset;
+    /* number of inter view pictures */
+    int i_num_inter_view_pics;
 
 } x264_slice_header_t;
 

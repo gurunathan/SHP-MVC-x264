@@ -104,6 +104,8 @@ static void x264_slice_header_init( x264_t *h, x264_slice_header_t *sh,
     sh->i_last_mb   = h->mb.i_mb_count - 1;
     sh->i_pps_id    = pps->i_id;
 
+    sh->i_num_inter_view_pics = 0;
+
     /*
     ** In case of MVC, the presentation frame num will be same
     ** for both view components
@@ -185,10 +187,14 @@ static void x264_slice_header_init( x264_t *h, x264_slice_header_t *sh,
         {
             if( sh->b_ref_pic_list_reordering[list] )
             {
+#if defined(MVC_DEBUG_PRINT)
+                printf("Temporal reordering\n");
+                printf("curr frame num value = %d\n", i_frame);
+#endif
                 int pred_frame_num = i_frame/2;
                 for( int i = 0; i < h->i_ref[list]; i++,list0_reorder_cnt++ )
                 {
-                    int diff = h->fref[list][i]->i_frame_num/2 - pred_frame_num;
+                    int diff = ( h->fref[list][i]->i_frame_num/2 - pred_frame_num );
                     sh->ref_pic_list_order[list][i].idc = ( diff > 0 );
                     sh->ref_pic_list_order[list][i].arg = (abs(diff) - 1) & ((1 << sps->i_log2_max_frame_num) - 1);
                     pred_frame_num = h->fref[list][i]->i_frame_num/2;
@@ -209,9 +215,42 @@ static void x264_slice_header_init( x264_t *h, x264_slice_header_t *sh,
 
         /* ToDo : pred_view_idx & list1 */
         /* diff in view has to be subtracted from the current view index */
-        sh->ref_pic_list_order[0][list0_reorder_cnt].idc = 5;
-        sh->ref_pic_list_order[0][list0_reorder_cnt].arg = 0;
+        /* Applicable in case of weighted prediction with dupes*/
+        if( h->num_inter_view_pics > 1 )
+        {
+#if defined(MVC_DEBUG_PRINT)
+            printf("List re-ordering including dupes\n");
+#endif
+            /*
+            ** Reorder the inter-view picture and put it in 0th index of the list
+            */
+            sh->ref_pic_list_order[0][list0_reorder_cnt].idc = 5;
+            sh->ref_pic_list_order[0][list0_reorder_cnt].arg = 0;
+            /*
+            ** Duplicate the inter-view picture in the current view list
+            */
+            sh->ref_pic_list_order[0][list0_reorder_cnt+1].idc = 5;
+            sh->ref_pic_list_order[0][list0_reorder_cnt+1].arg = 2;
+            /*
+            ** When the number of dupes is more than 1.
+            */
+            if( h->num_inter_view_pics > 2 )
+            {
+                /*
+                ** Duplicate the inter-view picture in the current view list
+                */
+                sh->ref_pic_list_order[0][list0_reorder_cnt+2].idc = 5;
+                sh->ref_pic_list_order[0][list0_reorder_cnt+2].arg = 2;
+            }
+        }
+        else
+        {
+            sh->ref_pic_list_order[0][list0_reorder_cnt].idc = 5;
+            sh->ref_pic_list_order[0][list0_reorder_cnt].arg = 0;
+        }
     }
+
+    sh->i_num_inter_view_pics = h->num_inter_view_pics;
 
     sh->i_cabac_init_idc = param->i_cabac_init_idc;
 
@@ -279,8 +318,7 @@ static void x264_slice_header_write( bs_t *s, x264_slice_header_t *sh, int i_nal
         if( sh->b_num_ref_idx_override )
         {
 #if defined(MVC_DEBUG_PRINT)
-            printf("override\n");
-            printf("ref_idx_override = %d\n",sh->i_num_ref_idx_l0_active);
+            printf("Active no of ref pics = %d\n",sh->i_num_ref_idx_l0_active);
 #endif
             bs_write_ue( s, sh->i_num_ref_idx_l0_active - 1 );
             if( sh->i_type == SLICE_TYPE_B )
@@ -294,12 +332,33 @@ static void x264_slice_header_write( bs_t *s, x264_slice_header_t *sh, int i_nal
         bs_write1( s, sh->b_ref_pic_list_reordering[0] );
         if( sh->b_ref_pic_list_reordering[0] )
         {
-            for( int i = 0; i < sh->i_num_ref_idx_l0_active; i++ )
+            if( sh->i_num_inter_view_pics > 2 )
             {
-                bs_write_ue( s, sh->ref_pic_list_order[0][i].idc );
-                bs_write_ue( s, sh->ref_pic_list_order[0][i].arg );
+                for( int i = 0; i < 3; i++ )
+                {
+                    bs_write_ue( s, sh->ref_pic_list_order[0][i].idc );
+                    bs_write_ue( s, sh->ref_pic_list_order[0][i].arg );
+                }
+                bs_write_ue( s, 3 );
             }
-            bs_write_ue( s, 3 );
+            else if( sh->i_num_inter_view_pics > 1 )
+            {
+                for( int i = 0; i < 2; i++ )
+                {
+                    bs_write_ue( s, sh->ref_pic_list_order[0][i].idc );
+                    bs_write_ue( s, sh->ref_pic_list_order[0][i].arg );
+                }
+                bs_write_ue( s, 3 );
+            }
+            else
+            {
+                for( int i = 0; i < sh->i_num_ref_idx_l0_active; i++ )
+                {
+                    bs_write_ue( s, sh->ref_pic_list_order[0][i].idc );
+                    bs_write_ue( s, sh->ref_pic_list_order[0][i].arg );
+                }
+                bs_write_ue( s, 3 );
+            }
         }
     }
     if( sh->i_type == SLICE_TYPE_B )
@@ -1634,8 +1693,17 @@ int x264_weighted_reference_duplicate( x264_t *h, int i_ref, const x264_weight_t
     newframe->b_duplicate = 1;
     memcpy( h->fenc->weight[j], w, sizeof(h->fenc->weight[i]) );
 
-    /* shift the frames to make space for the dupe. */
-    h->b_ref_reorder[0] = 1;
+    if( ( h->param.b_mvc_flag && !h->fenc->b_right_view_flag ) ||
+          !h->param.b_mvc_flag )
+        /* shift the frames to make space for the dupe. */
+        h->b_ref_reorder[0] = 1;
+    else
+    {
+        /* Its a right view picture and the dupe belongs to left view.
+        ** Thus, the space in the list is not required as its a part of
+        ** inter view list */
+        ++h->num_inter_view_pics;
+    }
 
     if( h->i_ref[0] < X264_REF_MAX )
         ++h->i_ref[0];
@@ -1744,7 +1812,6 @@ static inline void x264_reference_build_list( x264_t *h, int i_poc )
     int b_ok;
     /* MVC re-ordering flag for list0 */
     h->b_mvc_list_reorder_flag[0] = 0;
-    h->b_ref_reorder[0] = 0;
     /* MVC re-ordering flag for list1 */
     h->b_mvc_list_reorder_flag[1] = 0;
     h->num_inter_view_pics = 0;
@@ -2124,6 +2191,13 @@ static inline void x264_slice_init( x264_t *h, int i_nal_type, int i_global_qp )
 
         h->sh.i_num_ref_idx_l0_active = h->i_ref[0] <= 0 ? 1 : h->i_ref[0];
         h->sh.i_num_ref_idx_l1_active = h->i_ref[1] <= 0 ? 1 : h->i_ref[1];
+        if( h->num_inter_view_pics > 1 )
+        {
+            /*
+            ** Applicable in case of weighted prediction option 2. Dupes are not part of the current view list.
+            */
+            h->sh.i_num_ref_idx_l0_active -= ( h->num_inter_view_pics - 1 );
+        }
         if( h->sh.i_num_ref_idx_l0_active != h->pps->i_num_ref_idx_l0_default_active ||
             (h->sh.i_type == SLICE_TYPE_B && h->sh.i_num_ref_idx_l1_active != h->pps->i_num_ref_idx_l1_default_active) )
         {
@@ -2137,7 +2211,14 @@ static inline void x264_slice_init( x264_t *h, int i_nal_type, int i_global_qp )
         h->sh_backup = h->sh;
     }
 
-    h->fdec->i_frame_num = h->sh.i_frame_num;
+    /* In case of MVC, the presentation frame num is same so it was decided by 2 in the slice header.
+    ** But, internal to x264 encoder, frame numbers are incrementing irrespective of the view they belongs to,
+    ** so multiply by two.
+    */
+    if( h->param.b_mvc_flag )
+        h->fdec->i_frame_num = ( h->sh.i_frame_num << 1 );
+     else
+        h->fdec->i_frame_num = h->sh.i_frame_num;
 
     if( h->sps->i_poc_type == 0 )
     {

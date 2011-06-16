@@ -282,6 +282,12 @@ void x264_sps_init( x264_sps_t *sps, int i_id, x264_param_t *param, uint8_t b_mv
         sps->vui.i_log2_max_mv_length_horizontal =
         sps->vui.i_log2_max_mv_length_vertical = (int)log2f( X264_MAX( 1, param->analyse.i_mv_range*4-1 ) ) + 1;
     }
+
+    /*
+    ** Set number of non-anchor pictures in List0, used by MVC.
+    ** weightp 2 option introduces dupes.
+    */
+    sps->i_num_non_anchor_ref_l0 = (  param->analyse.i_weighted_pred == 2 ? 3 : 1 );
 }
 
 void x264_sps_write( bs_t *s, x264_sps_t *sps, uint8_t b_mvc_flag )
@@ -496,7 +502,7 @@ void x264_subset_sps_write( bs_t *q, x264_sps_t *sps )
 
     /* Todo: check if --weightp 2 option is enabled,
     ** If enabled, num_non_anchor_ref_l0 = 2 if not num_non_anchor_ref_l0 = 1 */
-    bs_write_ue( q, 2 ); //num_non_anchor_ref_l0
+    bs_write_ue( q, sps->i_num_non_anchor_ref_l0 ); //num_non_anchor_ref_l0
     bs_write_ue( q, 0 ); //non_anchor_ref_l0[view_id][non_anchor_ref]
     bs_write_ue( q, 1 ); //num_non_anchor_ref_l1
     bs_write_ue( q, 0 ); //non_anchor_ref_l1[view_id][anchor_ref]
