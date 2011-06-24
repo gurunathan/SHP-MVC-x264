@@ -41,6 +41,9 @@
 
 //#define MVC_DEBUG_PRINT
 
+/* B frame related changes for MVC */
+#define MVC_B_FRAME_CHANGES
+
 #define bs_write_ue bs_write_ue_big
 
 static int x264_encoder_frame_end( x264_t *h, x264_t *thread_current,
@@ -731,6 +734,14 @@ static int x264_validate_parameters( x264_t *h )
         h->param.analyse.i_weighted_pred = X264_MIN( h->param.analyse.i_weighted_pred, X264_WEIGHTP_SIMPLE );
     }
 
+#if defined(MVC_B_FRAME_CHANGES)
+    /*
+    ** The no of B frames in the command line input is for a single view.
+    ** So, in case of MVC, this no needs to be multiplied by two.
+    */
+    h->param.i_bframe = ( h->param.i_bframe * 2 )+ 1;
+    /* Todo : Check whether this exceeds the limit */
+#endif
     h->param.i_frame_reference = x264_clip3( h->param.i_frame_reference, 1, X264_REF_MAX );
     h->param.i_dpb_size = x264_clip3( h->param.i_dpb_size, 1, X264_REF_MAX );
 
@@ -1171,11 +1182,16 @@ x264_t *x264_encoder_open( x264_param_t *param )
     if( h->param.rc.b_mb_tree || h->param.rc.i_vbv_buffer_size )
         h->frames.i_delay = X264_MAX( h->frames.i_delay, h->param.rc.i_lookahead );
     i_slicetype_length = h->frames.i_delay;
+#if defined(MVC_DEBUG_PRINT)
+    printf("slice type length = %d\n",i_slicetype_length);
+#endif
     h->frames.i_delay += h->i_thread_frames - 1;
     h->frames.i_delay += h->param.i_sync_lookahead;
     h->frames.i_delay += h->param.b_vfr_input;
     h->frames.i_bframe_delay = h->param.i_bframe ? (h->param.i_bframe_pyramid ? 2 : 1) : 0;
-
+#if defined(MVC_DEBUG_PRINT)
+    printf("delay = %d\n",h->frames.i_delay);
+#endif
     h->frames.i_max_ref0 = h->param.i_frame_reference;
     h->frames.i_max_ref1 = X264_MIN( h->sps->vui.i_num_reorder_frames, h->param.i_frame_reference );
     h->frames.i_max_dpb  = h->sps->vui.i_max_dec_frame_buffering;

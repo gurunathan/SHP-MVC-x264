@@ -29,6 +29,10 @@
 #include "macroblock.h"
 #include "me.h"
 
+#define MVC_DEBUG_PRINT
+/* B frame related changes for MVC */
+#define MVC_B_FRAME_CHANGES
+
 // Indexed by pic_struct values
 static const uint8_t delta_tfi_divisor[10] = { 0, 2, 1, 1, 2, 2, 3, 3, 4, 6 };
 
@@ -1273,6 +1277,9 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
         return;
     }
 
+    /*
+    ** When there is B frame support. i.e. B frames are enabled in the current configuration.
+    */
     if( h->param.i_bframe )
     {
         if( h->param.i_bframe_adaptive == X264_B_ADAPT_TRELLIS )
@@ -1295,8 +1302,23 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
         }
         else if( h->param.i_bframe_adaptive == X264_B_ADAPT_FAST )
         {
+#if defined(MVC_DEBUG_PRINT)
+            printf("num_frames = %d\n",num_frames);
+#endif
+#if defined(MVC_B_FRAME_CHANGES)
+            /*
+            ** Frames are processed in groups.Group size will be num_frames (Ex.4).
+            */
+            for( int i = 0; i <= num_frames-3; )
+#else
+            /*
+            ** Frames are processed in groups.Group size will be num_frames (Ex.4).
+            */
             for( int i = 0; i <= num_frames-2; )
+#endif
             {
+                /* syntax of this is like [list0 picture idx], [list1 pic idx], [current idx], intra penalty */
+                /* Evaluate i+2 picture as P frame with intra cost penalty */
                 cost2p1 = x264_slicetype_frame_cost( h, &a, frames, i+0, i+2, i+2, 1 );
                 if( frames[i+2]->i_intra_mbs[2] > i_mb_count / 2 )
                 {
@@ -1306,8 +1328,11 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
                     continue;
                 }
 
+                /* Evaluate i+1 picture as B frame without intra cost penalty */
                 cost1b1 = x264_slicetype_frame_cost( h, &a, frames, i+0, i+2, i+1, 0 );
+                /* Evaluate i+1 picture as P frame without intra cost penalty */
                 cost1p0 = x264_slicetype_frame_cost( h, &a, frames, i+0, i+1, i+1, 0 );
+                /* Evaluate i+2 picture as P frame without intra cost penalty */
                 cost2p0 = x264_slicetype_frame_cost( h, &a, frames, i+1, i+2, i+2, 0 );
 
                 if( cost1p0 + cost2p0 < cost1b1 + cost2p1 )
@@ -1326,6 +1351,7 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
                 for( j = i+2; j <= X264_MIN( i+h->param.i_bframe, num_frames-1 ); j++ )
                 {
                     int pthresh = X264_MAX(INTER_THRESH - P_SENS_BIAS * (j-i-1), INTER_THRESH/10);
+                    /* Evaluate i+3 th picture as P frame with Intra penalty & reference as i+0 */
                     int pcost = x264_slicetype_frame_cost( h, &a, frames, i+0, j+1, j+1, 1 );
                     if( pcost > pthresh*i_mb_count || frames[j+1]->i_intra_mbs[j-i+1] > i_mb_count/3 )
                         break;
@@ -1334,10 +1360,39 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
                 frames[j]->i_type = X264_TYPE_P;
                 i = j;
             }
+#if defined(MVC_B_FRAME_CHANGES)
+            frames[num_frames - 1]->i_type = X264_TYPE_P;
+#endif
             frames[num_frames]->i_type = X264_TYPE_P;
+            /*
+            ** In case of MVC, the view component after the IDR view component
+            ** should be of type 'P', because this is an anchor view component.
+            ** so, forcing the view component to P type irrespective of the look ahead
+            ** decision.
+            */
+            if( h->lookahead->b_code_anchor_frame == 1 )
+            {
+#if defined(MVC_DEBUG_PRINT)
+                printf("Time to encode an anchor picture\n");
+#endif
+                frames[1]->i_type = X264_TYPE_P;
+#if defined(MVC_B_FRAME_CHANGES)
+                h->lookahead->b_code_anchor_frame = 0;
+#endif
+            }
             num_bframes = 0;
             while( num_bframes < num_frames && frames[num_bframes+1]->i_type == X264_TYPE_B )
                 num_bframes++;
+#if defined(MVC_DEBUG_PRINT)
+            printf( "number of B frames = %d\n",num_bframes );
+            for( int k = 0; k < num_frames; k++ )
+            {
+                char p_arr[40] = {'P','-','F','R','A','M','E','\0'};
+                char b_arr[40] = {'B','-','F','R','A','M','E','\0'};
+                char *p  = (( frames[k+1]->i_type == X264_TYPE_P ) ? p_arr : b_arr );
+                printf( "Frame Type = %s\n", p );
+            }
+#endif
         }
         else
         {
@@ -1358,12 +1413,19 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
 
         reset_start = keyframe ? 1 : X264_MIN( num_bframes+2, num_analysed_frames+1 );
     }
+    /*
+    ** No B frames, so all frames will be of P type
+    */
     else
     {
         for( int j = 1; j <= num_frames; j++ )
             frames[j]->i_type = X264_TYPE_P;
         reset_start = !keyframe + 1;
         num_bframes = 0;
+#if defined(MVC_DEBUG_PRINT)
+        printf("num_frames = %d\n",num_frames);
+        printf("P Frame decision\n");
+#endif
     }
 
     /* Perform the actual macroblock tree analysis.
@@ -1494,6 +1556,9 @@ void x264_slicetype_decide( x264_t *h )
         {
             /* Close GOP */
             h->lookahead->i_last_keyframe = frm->i_frame;
+#if defined(MVC_B_FRAME_CHANGES)
+            h->lookahead->b_code_anchor_frame = 1;
+#endif
             frm->b_keyframe = 1;
             if( bframes > 0 )
             {
