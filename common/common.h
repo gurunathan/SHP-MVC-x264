@@ -382,6 +382,9 @@ typedef struct
     /* number of inter view pictures */
     int i_num_inter_view_pics;
 
+    /* Right view flag */
+    int i_right_view_flag;
+
 } x264_slice_header_t;
 
 typedef struct x264_lookahead_t
@@ -398,6 +401,7 @@ typedef struct x264_lookahead_t
     x264_sync_frame_list_t        ofbuf;
 #if defined(MVC_B_FRAME_CHANGES)
     uint8_t                       b_code_anchor_frame; /* used in MVC */
+    uint8_t                       b_early_termination; /* Early termination from lookahead */
 #endif
 } x264_lookahead_t;
 

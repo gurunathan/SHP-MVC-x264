@@ -1361,6 +1361,10 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
                 i = j;
             }
 #if defined(MVC_B_FRAME_CHANGES)
+             if( num_frames >= 4 )
+                frames[num_frames - 3]->i_type = X264_TYPE_B;//hack for testing
+             if( num_frames >= 3 )
+                frames[num_frames - 2]->i_type = X264_TYPE_B;//hack for testing
             frames[num_frames - 1]->i_type = X264_TYPE_P;
 #endif
             frames[num_frames]->i_type = X264_TYPE_P;
@@ -1458,6 +1462,8 @@ void x264_slicetype_decide( x264_t *h )
     x264_frame_t *frm;
     int bframes;
     int brefs;
+    int i_nonbframes;
+    int i_firstnonbidx = -1;
 
     if( !h->lookahead->next.i_size )
         return;
@@ -1506,7 +1512,15 @@ void x264_slicetype_decide( x264_t *h )
              || (h->param.rc.i_vbv_buffer_size && h->param.rc.i_lookahead) )
         x264_slicetype_analyse( h, 0 );
 
+    /*
+    ** At this point the look ahead already decided the frame types in captured order.
+    ** Go through the look ahead list. Loop through the list till a non-B or a non-B_REF frame.
+    */
+#if defined(MVC_B_FRAME_CHANGES)
+    for( bframes = 0, brefs = 0, i_nonbframes = 0;; bframes++ )
+#else
     for( bframes = 0, brefs = 0;; bframes++ )
+#endif
     {
         frm = h->lookahead->next.list[bframes];
         if( frm->i_type == X264_TYPE_BREF && h->param.i_bframe_pyramid < X264_B_PYRAMID_NORMAL &&
@@ -1558,6 +1572,7 @@ void x264_slicetype_decide( x264_t *h )
             h->lookahead->i_last_keyframe = frm->i_frame;
 #if defined(MVC_B_FRAME_CHANGES)
             h->lookahead->b_code_anchor_frame = 1;
+            h->lookahead->b_early_termination = 1;
 #endif
             frm->b_keyframe = 1;
             if( bframes > 0 )
@@ -1583,23 +1598,66 @@ void x264_slicetype_decide( x264_t *h )
         if( frm->i_type == X264_TYPE_AUTO )
             frm->i_type = X264_TYPE_B;
 
+#if !defined( MVC_B_FRAME_CHANGES )
         else if( !IS_X264_TYPE_B( frm->i_type ) ) break;
-    }
+#else
+        else if( !IS_X264_TYPE_B( frm->i_type ) )
+        {
+            if( frm->i_type == X264_TYPE_IDR ) break;
+            if( h->lookahead->b_early_termination )
+            {
+                printf("Early Termination\n");
+                h->lookahead->b_early_termination = 0;
+                break;
+            }
+            i_nonbframes++;
+            if( i_nonbframes == 2 )
+                break;
+            else
+                i_firstnonbidx = bframes;
+        }
+#endif
+    } //end of for
 
     if( bframes )
         h->lookahead->next.list[bframes-1]->b_last_minigop_bframe = 1;
     h->lookahead->next.list[bframes]->i_bframes = bframes;
 
+    /*
+    ** In case of MVC, the picture types of both the views should be same.
+    ** Commenting this out for the time being.
+    ** Todo: When one of the views has B_REF type, mark the other view picture
+    ** also of B_REF type.
+    */
+#if 0
     /* insert a bref into the sequence */
     if( h->param.i_bframe_pyramid && bframes > 1 && !brefs )
     {
+        int i;
+#if !defined(MVC_B_FRAME_CHANGES)
         h->lookahead->next.list[bframes/2]->i_type = X264_TYPE_BREF;
+#else
+#if defined(MVC_DEBUG_PRINT)
+        printf("Inserting a BREF in sequence\n");
+#endif
+        for( i = 0; i < bframes; i++ )
+        {
+          if( h->lookahead->next.list[i]->i_type == X264_TYPE_B )
+               break;
+        }
+#if defined(MVC_DEBUG_PRINT)
+        printf("BREF index = %d\n",i);
+#endif
+        h->lookahead->next.list[i]->i_type = X264_TYPE_BREF;
+#endif
         brefs++;
     }
+#endif
 
     /* calculate the frame costs ahead of time for x264_rc_analyse_slice while we still have lowres */
     if( h->param.rc.i_rc_method != X264_RC_CQP )
     {
+
         x264_mb_analysis_t a;
         int p0, p1, b;
         p1 = b = bframes + 1;
@@ -1649,17 +1707,89 @@ void x264_slicetype_decide( x264_t *h )
     int i_coded = h->lookahead->next.list[0]->i_frame;
     if( bframes )
     {
+#if !defined( MVC_B_FRAME_CHANGES )
         int idx_list[] = { brefs+1, 1 };
+#else
+        int idx_list[2];
+        if( bframes > 2 )
+        {
+            idx_list[0] = brefs+2;
+            idx_list[1] = 2;
+        }
+        else
+        {
+            idx_list[0] = brefs+1;
+            idx_list[1] = 1;
+        }
+#endif
+
+#if defined(MVC_DEBUG_PRINT)
+        printf("bframes = %d\n",bframes);
+        printf("brefs = %d\n",brefs);
+        printf("i_nonbframes = %d\n",i_nonbframes);
+        printf("i_firstnonbidx = %d\n",i_firstnonbidx);
+#endif
         for( int i = 0; i < bframes; i++ )
         {
+#if defined( MVC_B_FRAME_CHANGES)
+            if( h->lookahead->next.list[i]->i_type != X264_TYPE_BREF &&
+                h->lookahead->next.list[i]->i_type != X264_TYPE_B )
+            {
+               assert( i == i_firstnonbidx);
+               continue;
+            }
+#endif
             int idx = idx_list[h->lookahead->next.list[i]->i_type == X264_TYPE_BREF]++;
+#if defined(MVC_DEBUG_PRINT)
+            printf("index = %d\n",idx);
+#endif
             frames[idx] = h->lookahead->next.list[i];
             frames[idx]->i_reordered_pts = h->lookahead->next.list[idx]->i_pts;
         }
         frames[0] = h->lookahead->next.list[bframes];
         frames[0]->i_reordered_pts = h->lookahead->next.list[0]->i_pts;
+#if defined( MVC_B_FRAME_CHANGES )
+        if( i_nonbframes == 2 )
+        {
+            frames[1] = h->lookahead->next.list[i_firstnonbidx];
+            frames[1]->i_reordered_pts = h->lookahead->next.list[1]->i_pts;
+            /*
+            ** Make sure that the order is correct
+            */
+#if defined(MVC_DEBUG_PRINT)
+            printf("frames[0]->i_frame_num = %d\n",frames[0]->i_frame_num);
+            printf("frames[1]->i_frame_num = %d\n",frames[1]->i_frame_num);
+#endif
+            if( frames[1]->i_frame_num > frames[0]->i_frame_num)
+            {
+#if defined(MVC_DEBUG_PRINT)
+                printf("swapping process\n");
+#endif
+                x264_frame_t *tmp = frames[1];
+                frames[1] = frames[0];
+                frames[0] = tmp;
+            }
+        }
+#endif
         memcpy( h->lookahead->next.list, frames, (bframes+1) * sizeof(x264_frame_t*) );
     }
+
+#if defined( MVC_DEBUG_PRINT )
+    if( bframes )
+    {
+        printf("*******************************************\n");
+        printf("Coded order\n");
+        for( int i = 0; i < ( bframes + 1); i++ )
+        {
+            char p_arr[40] = {'P','-','F','R','A','M','E','\0'};
+            char b_arr[40] = {'B','-','F','R','A','M','E','\0'};
+            char *p  = (( h->lookahead->next.list[i]->i_type == X264_TYPE_P ) ? p_arr : b_arr );
+            printf("index = %d\t",i);
+            printf("Type = %s\n",p);
+        }
+        printf("*******************************************\n");
+    }
+#endif
 
     for( int i = 0; i <= bframes; i++ )
     {

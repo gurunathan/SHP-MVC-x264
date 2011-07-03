@@ -39,7 +39,7 @@
 
 //#define DEBUG_MB_TYPE
 
-//#define MVC_DEBUG_PRINT
+#define MVC_DEBUG_PRINT
 
 /* B frame related changes for MVC */
 #define MVC_B_FRAME_CHANGES
@@ -114,9 +114,14 @@ static void x264_slice_header_init( x264_t *h, x264_slice_header_t *sh,
     ** for both view components
     */
     if( h->param.b_mvc_flag )
+    {
         sh->i_frame_num = i_frame/2;
+        sh->i_right_view_flag = h->fenc->b_right_view_flag;
+    }
     else
+    {
         sh->i_frame_num = i_frame;
+    }
 
     sh->b_mbaff = h->param.b_interlaced;
     sh->b_field_pic = 0;    /* no field support for now */
@@ -219,6 +224,10 @@ static void x264_slice_header_init( x264_t *h, x264_slice_header_t *sh,
         /* ToDo : pred_view_idx & list1 */
         /* diff in view has to be subtracted from the current view index */
         /* Applicable in case of weighted prediction with dupes*/
+        /* In any case (with B frames or not), the inter view picture will only be
+        ** put in List0 (as Left view component will be encoded before right view
+        ** component.
+        */
         if( h->num_inter_view_pics > 1 )
         {
 #if defined(MVC_DEBUG_PRINT)
@@ -298,7 +307,16 @@ static void x264_slice_header_write( bs_t *s, x264_slice_header_t *sh, int i_nal
 
     if( sh->sps->i_poc_type == 0 )
     {
+#if !defined(MVC_B_FRAME_CHANGES)
         bs_write( s, sh->sps->i_log2_max_poc_lsb, sh->i_poc & ((1<<sh->sps->i_log2_max_poc_lsb)-1) );
+#else
+#if defined(MVC_DEBUG_PRINT)
+        printf("****************************************\n");
+        printf("POC value in SH = %d\n", sh->i_poc );
+        printf("****************************************\n");
+#endif
+        bs_write( s, sh->sps->i_log2_max_poc_lsb, ( ( ( sh->i_poc / 2 ) - sh->i_right_view_flag ) & ((1<<sh->sps->i_log2_max_poc_lsb)-1)) );
+#endif
         if( sh->pps->b_pic_order && !sh->b_field_pic )
             bs_write_se( s, sh->i_delta_poc_bottom );
     }
@@ -423,6 +441,9 @@ static void x264_slice_header_write( bs_t *s, x264_slice_header_t *sh, int i_nal
             {
                 for( int i = 0; i < sh->i_mmco_command_count; i++ )
                 {
+#if defined(MVC_DEBUG_PRINT)
+                    printf("MMCO = 5 enabled\n");
+#endif
                     bs_write_ue( s, 1 ); /* mark short term ref as unused */
                     bs_write_ue( s, sh->mmco[i].i_difference_of_pic_nums - 1 );
                 }
@@ -1532,7 +1553,9 @@ static void x264_mvc_nal_start( x264_t *h, int i_type, int i_ref_idc )
     ** Send MMCO5 command for all the anchor pictures to reset POC
     */
     if( nal->st_mvc_nal.b_anchor_pic_flag )
+    {
         h->sh.i_mmco5_command_enabled = 1;
+    }
     nal->i_payload= 0;
     nal->p_payload= &h->out.p_bitstream[bs_pos( &h->out.bs ) / 8];
 }
@@ -1900,7 +1923,19 @@ static inline void x264_reference_build_list( x264_t *h, int i_poc )
             }
             /* Reference frame's POC is greater than current pic POC, put the pic in List1 */
             else if( h->frames.reference[i]->i_poc > i_poc )
-                h->fref[1][h->i_ref[1]++] = h->frames.reference[i];
+            {
+                /* Current frame is left view type & reference picture is of right view type */
+                if( !( i_poc & 3 ) && ( h->frames.reference[i]->i_poc & 3 ) )
+                    continue;
+
+                    /* Current frame is right view type & reference picture is of left view type */
+                else if( ( i_poc & 3 ) && !( h->frames.reference[i]->i_poc & 3) )
+                    continue;
+
+                /* Same view picture, add the frame in to list1 */
+                else
+                    h->fref[1][h->i_ref[1]++] = h->frames.reference[i];
+            }
         }
     }
 
@@ -1949,19 +1984,37 @@ static inline void x264_reference_build_list( x264_t *h, int i_poc )
 
 #if defined(MVC_DEBUG_PRINT)
     printf("Frame no = %d\t",h->fenc->i_frame);
+    printf("****************************************\n");
+    printf("Inside list reordering\n");
+    printf( "Frame type = %d\n",h->fdec->i_type );
+    printf( "POC no = %d\n",h->fdec->i_poc);
+    printf("****************************************\n");
 #endif
+
     /*
     ** Construct Inter view DPB & append with the temporal DPB.
     ** For MVC, right view picture(s) could refer to corresponding left view picture
     */
     if( h->param.b_mvc_flag && h->fenc->b_right_view_flag )
     {
-        h->b_mvc_list_reorder_flag[0] = 1;
+        if( h->num_inter_view_pics )
+            h->b_mvc_list_reorder_flag[0] = 1;
+        if( h->param.i_bframe )
+            h->b_mvc_list_reorder_flag[1] = 1;
     }
 
-    assert(h->i_ref[0] != 0 );
+    assert( h->i_ref[0] != 0 );
+
+    if( h->fdec->i_type == X264_TYPE_P )
+            assert( h->i_ref[1] == 0 );
+
+    if( h->fdec->i_type == X264_TYPE_B ||
+        h->fdec->i_type == X264_TYPE_BREF)
+            assert( h->i_ref[1] != 0 );
+
 #if defined(MVC_DEBUG_PRINT)
-    printf("No of reference frames = %d\t",h->i_ref[0]);
+    printf("No of reference frames in List0 = %d\n",h->i_ref[0]);
+    printf("No of reference frames in List1 = %d\n",h->i_ref[1]);
     printf("Temporal reorder = %d\n",h->b_ref_reorder[0]);
 #endif
 
@@ -2809,7 +2862,9 @@ int     x264_encoder_encode( x264_t *h,
         if( fenc->i_frame == 0 )
             h->frames.i_first_pts = fenc->i_pts;
         if( h->frames.i_bframe_delay && fenc->i_frame == h->frames.i_bframe_delay )
+        {
             h->frames.i_bframe_delay_time = fenc->i_pts - h->frames.i_first_pts;
+        }
 
         if( h->param.b_vfr_input && fenc->i_pts <= h->frames.i_largest_pts )
             x264_log( h, X264_LOG_WARNING, "non-strictly-monotonic PTS\n" );
@@ -2984,6 +3039,13 @@ int     x264_encoder_encode( x264_t *h,
         h->fdec->i_dts = h->fenc->i_reordered_pts;
     if( h->fenc->i_type == X264_TYPE_IDR )
         h->i_last_idr_pts = h->fdec->i_pts;
+
+#if defined(MVC_DEBUG_PRINT)
+    printf("****************************************\n");
+    printf( "Frame type = %d\n",h->fdec->i_type );
+    printf( "POC no = %d\n",h->fdec->i_poc);
+    printf("****************************************\n");
+#endif
 
     /* ------------------- Init                ----------------------------- */
     /* build ref list 0/1 */

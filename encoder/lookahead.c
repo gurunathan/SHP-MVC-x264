@@ -70,9 +70,18 @@ static void x264_lookahead_update_last_nonb( x264_t *h, x264_frame_t *new_nonb )
 #if HAVE_THREAD
 static void x264_lookahead_slicetype_decide( x264_t *h )
 {
+#if defined(MVC_DEBUG_PRINT)
+    printf("LOG: Inside lookahead_slicetype_decide\n");
+#endif
     x264_stack_align( x264_slicetype_decide, h );
 
+#if defined(MVC_DEBUG_PRINT)
+    printf("before look ahead call\n");
+#endif
     x264_lookahead_update_last_nonb( h, h->lookahead->next.list[0] );
+#if defined(MVC_DEBUG_PRINT)
+    printf("after lookahead call\n");
+#endif
 
     x264_pthread_mutex_lock( &h->lookahead->ofbuf.mutex );
     while( h->lookahead->ofbuf.i_size == h->lookahead->ofbuf.i_max_size )
@@ -139,6 +148,7 @@ int x264_lookahead_init( x264_t *h, int i_slicetype_length )
     look->i_last_keyframe = - h->param.i_keyint_max;
 #if defined(MVC_B_FRAME_CHANGES)
     look->b_code_anchor_frame = 0;
+    look->b_early_termination = 0;
 #endif
     look->b_analyse_keyframe = (h->param.rc.b_mb_tree || (h->param.rc.i_vbv_buffer_size && h->param.rc.i_lookahead))
                                && !h->param.rc.b_stat_read;
@@ -225,6 +235,9 @@ static void x264_lookahead_encoder_shift( x264_t *h )
 
 void x264_lookahead_get_frames( x264_t *h )
 {
+#if defined(MVC_DEBUG_PRINT)
+    printf("LOG: Inside lookahead_get_frames\n");
+#endif
     if( h->param.i_sync_lookahead )
     {   /* We have a lookahead thread, so get frames from there */
         x264_pthread_mutex_lock( &h->lookahead->ofbuf.mutex );
