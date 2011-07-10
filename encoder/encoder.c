@@ -39,10 +39,7 @@
 
 //#define DEBUG_MB_TYPE
 
-#define MVC_DEBUG_PRINT
-
-/* B frame related changes for MVC */
-#define MVC_B_FRAME_CHANGES
+//#define MVC_DEBUG_PRINT
 
 #define bs_write_ue bs_write_ue_big
 
@@ -108,6 +105,11 @@ static void x264_slice_header_init( x264_t *h, x264_slice_header_t *sh,
     sh->i_pps_id    = pps->i_id;
 
     sh->i_num_inter_view_pics = 0;
+
+    /*
+    ** Register the MVC flag
+    */
+    sh->i_mvc_flag = h->param.b_mvc_flag;
 
     /*
     ** In case of MVC, the presentation frame num will be same
@@ -307,16 +309,17 @@ static void x264_slice_header_write( bs_t *s, x264_slice_header_t *sh, int i_nal
 
     if( sh->sps->i_poc_type == 0 )
     {
-#if !defined(MVC_B_FRAME_CHANGES)
-        bs_write( s, sh->sps->i_log2_max_poc_lsb, sh->i_poc & ((1<<sh->sps->i_log2_max_poc_lsb)-1) );
-#else
+        if( !sh->i_mvc_flag ) //AVC Path
+            bs_write( s, sh->sps->i_log2_max_poc_lsb, sh->i_poc & ((1<<sh->sps->i_log2_max_poc_lsb)-1) );
+        else
+        {
 #if defined(MVC_DEBUG_PRINT)
-        printf("****************************************\n");
-        printf("POC value in SH = %d\n", sh->i_poc );
-        printf("****************************************\n");
+            printf("****************************************\n");
+            printf("Right view flag in SH = %d\n",sh->i_right_view_flag);
+            printf("****************************************\n");
 #endif
-        bs_write( s, sh->sps->i_log2_max_poc_lsb, ( ( ( sh->i_poc / 2 ) - sh->i_right_view_flag ) & ((1<<sh->sps->i_log2_max_poc_lsb)-1)) );
-#endif
+            bs_write( s, sh->sps->i_log2_max_poc_lsb, ( ( ( sh->i_poc / 2 ) - sh->i_right_view_flag ) & ((1<<sh->sps->i_log2_max_poc_lsb)-1)) );
+        }
         if( sh->pps->b_pic_order && !sh->b_field_pic )
             bs_write_se( s, sh->i_delta_poc_bottom );
     }
@@ -441,9 +444,6 @@ static void x264_slice_header_write( bs_t *s, x264_slice_header_t *sh, int i_nal
             {
                 for( int i = 0; i < sh->i_mmco_command_count; i++ )
                 {
-#if defined(MVC_DEBUG_PRINT)
-                    printf("MMCO = 5 enabled\n");
-#endif
                     bs_write_ue( s, 1 ); /* mark short term ref as unused */
                     bs_write_ue( s, sh->mmco[i].i_difference_of_pic_nums - 1 );
                 }
@@ -451,6 +451,9 @@ static void x264_slice_header_write( bs_t *s, x264_slice_header_t *sh, int i_nal
             }
             if( sh->i_mmco5_command_enabled )
             {
+#if defined(MVC_DEBUG_PRINT)
+                    printf("MMCO = 5 enabled\n");
+#endif
                 bs_write_ue( s, 5 ); /* mark all reference pictures as unused for reference */
                 bs_write_ue( s, 0 ); /* end command list */
             }
@@ -755,14 +758,15 @@ static int x264_validate_parameters( x264_t *h )
         h->param.analyse.i_weighted_pred = X264_MIN( h->param.analyse.i_weighted_pred, X264_WEIGHTP_SIMPLE );
     }
 
-#if defined(MVC_B_FRAME_CHANGES)
-    /*
-    ** The no of B frames in the command line input is for a single view.
-    ** So, in case of MVC, this no needs to be multiplied by two.
-    */
-    h->param.i_bframe = ( h->param.i_bframe * 2 )+ 1;
-    /* Todo : Check whether this exceeds the limit */
-#endif
+    if( h->param.b_mvc_flag )
+    {
+        /*
+        ** The no of B frames in the command line input is for a single view.
+        ** So, in case of MVC, this no needs to be multiplied by two.
+        */
+        /* Todo : Check whether this exceeds the limit */
+        h->param.i_bframe = ( h->param.i_bframe * 2 )+ 1;
+    }
     h->param.i_frame_reference = x264_clip3( h->param.i_frame_reference, 1, X264_REF_MAX );
     h->param.i_dpb_size = x264_clip3( h->param.i_dpb_size, 1, X264_REF_MAX );
 

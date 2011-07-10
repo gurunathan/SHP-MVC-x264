@@ -41,9 +41,6 @@
 #define FIX8(f) ((int)(f*(1<<8)+.5))
 #define ALIGN(x,a) (((x)+((a)-1))&~((a)-1))
 
-/* B frame related changes for MVC */
-#define MVC_B_FRAME_CHANGES
-
 #define CHECKED_MALLOC( var, size )\
 do {\
     var = x264_malloc( size );\
@@ -385,6 +382,9 @@ typedef struct
     /* Right view flag */
     int i_right_view_flag;
 
+    /* MVC flag */
+    int i_mvc_flag;
+
 } x264_slice_header_t;
 
 typedef struct x264_lookahead_t
@@ -399,10 +399,9 @@ typedef struct x264_lookahead_t
     x264_sync_frame_list_t        ifbuf;
     x264_sync_frame_list_t        next;
     x264_sync_frame_list_t        ofbuf;
-#if defined(MVC_B_FRAME_CHANGES)
     uint8_t                       b_code_anchor_frame; /* used in MVC */
     uint8_t                       b_early_termination; /* Early termination from lookahead */
-#endif
+    uint8_t                       i_num_b_frames; /* Number of B frames in the look ahead group */
 } x264_lookahead_t;
 
 typedef struct x264_ratecontrol_t   x264_ratecontrol_t;

@@ -25,9 +25,6 @@
  * For more information, contact us at licensing@x264.com.
  *****************************************************************************/
 
-/* B frame related changes for MVC */
-#define MVC_B_FRAME_CHANGES
-
 /* LOOKAHEAD (threaded and non-threaded mode)
  *
  * Lookahead types:
@@ -41,6 +38,8 @@
  */
 #include "common/common.h"
 #include "analyse.h"
+
+//#define MVC_DEBUG_PRINT
 
 static void x264_lookahead_shift( x264_sync_frame_list_t *dst, x264_sync_frame_list_t *src, int count )
 {
@@ -146,10 +145,11 @@ int x264_lookahead_init( x264_t *h, int i_slicetype_length )
         h->thread[i]->lookahead = look;
 
     look->i_last_keyframe = - h->param.i_keyint_max;
-#if defined(MVC_B_FRAME_CHANGES)
-    look->b_code_anchor_frame = 0;
-    look->b_early_termination = 0;
-#endif
+    if( h->param.b_mvc_flag )
+    {
+        look->b_code_anchor_frame = 0;
+        look->b_early_termination = 0;
+    }
     look->b_analyse_keyframe = (h->param.rc.b_mb_tree || (h->param.rc.i_vbv_buffer_size && h->param.rc.i_lookahead))
                                && !h->param.rc.b_stat_read;
     look->i_slicetype_length = i_slicetype_length;

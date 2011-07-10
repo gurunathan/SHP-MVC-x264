@@ -29,9 +29,7 @@
 #include "macroblock.h"
 #include "me.h"
 
-#define MVC_DEBUG_PRINT
-/* B frame related changes for MVC */
-#define MVC_B_FRAME_CHANGES
+//#define MVC_DEBUG_PRINT
 
 // Indexed by pic_struct values
 static const uint8_t delta_tfi_divisor[10] = { 0, 2, 1, 1, 2, 2, 3, 3, 4, 6 };
@@ -1018,7 +1016,6 @@ static void x264_vbv_lookahead( x264_t *h, x264_mb_analysis_t *a, x264_frame_t *
         h->i_coded_fields_lookahead = frames[cur_nonb]->i_coded_fields_lookahead;
         h->i_cpb_delay_lookahead = frames[cur_nonb]->i_cpb_delay_lookahead;
     }
-
     while( cur_nonb < num_frames )
     {
         /* P/I cost: This shouldn't include the cost of next_nonb */
@@ -1238,8 +1235,13 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
 
     assert( h->frames.b_have_lowres );
 
+    if( h->param.b_mvc_flag )
+    {
+        h->lookahead->i_num_b_frames = 0;
+    }
     if( !h->lookahead->last_nonb )
         return;
+
     frames[0] = h->lookahead->last_nonb;
     for( framecnt = 0; framecnt < i_max_search && h->lookahead->next.list[framecnt]->i_type == X264_TYPE_AUTO; framecnt++ )
         frames[framecnt+1] = h->lookahead->next.list[framecnt];
@@ -1302,20 +1304,15 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
         }
         else if( h->param.i_bframe_adaptive == X264_B_ADAPT_FAST )
         {
+            /*
+            ** Frames are processed in groups.Group size will be num_frames (Ex.4).
+            ** There are two P frames (Each for a view).
+            */
+           int total_num_frames =  h->param.b_mvc_flag ? num_frames-3 : num_frames-2;
 #if defined(MVC_DEBUG_PRINT)
             printf("num_frames = %d\n",num_frames);
 #endif
-#if defined(MVC_B_FRAME_CHANGES)
-            /*
-            ** Frames are processed in groups.Group size will be num_frames (Ex.4).
-            */
-            for( int i = 0; i <= num_frames-3; )
-#else
-            /*
-            ** Frames are processed in groups.Group size will be num_frames (Ex.4).
-            */
-            for( int i = 0; i <= num_frames-2; )
-#endif
+            for( int i = 0; i <= total_num_frames; )
             {
                 /* syntax of this is like [list0 picture idx], [list1 pic idx], [current idx], intra penalty */
                 /* Evaluate i+2 picture as P frame with intra cost penalty */
@@ -1360,13 +1357,16 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
                 frames[j]->i_type = X264_TYPE_P;
                 i = j;
             }
-#if defined(MVC_B_FRAME_CHANGES)
-             if( num_frames >= 4 )
-                frames[num_frames - 3]->i_type = X264_TYPE_B;//hack for testing
-             if( num_frames >= 3 )
-                frames[num_frames - 2]->i_type = X264_TYPE_B;//hack for testing
-            frames[num_frames - 1]->i_type = X264_TYPE_P;
-#endif
+            if( h->param.b_mvc_flag )
+            {
+                if( num_frames >= 4 )
+                    frames[num_frames - 3]->i_type = X264_TYPE_P;//hack for testing
+                if( num_frames >= 3 )
+                    frames[num_frames - 2]->i_type = X264_TYPE_P;//hack for testing
+                /* End P frame for the left view component */
+                frames[num_frames - 1]->i_type = X264_TYPE_P;
+            }
+            /* End P frame for the right view component */
             frames[num_frames]->i_type = X264_TYPE_P;
             /*
             ** In case of MVC, the view component after the IDR view component
@@ -1380,20 +1380,46 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
                 printf("Time to encode an anchor picture\n");
 #endif
                 frames[1]->i_type = X264_TYPE_P;
-#if defined(MVC_B_FRAME_CHANGES)
-                h->lookahead->b_code_anchor_frame = 0;
-#endif
             }
             num_bframes = 0;
-            while( num_bframes < num_frames && frames[num_bframes+1]->i_type == X264_TYPE_B )
-                num_bframes++;
+            if( h->param.b_mvc_flag )
+            {
+                for( int k = 0; ( k < num_frames && !h->lookahead->b_code_anchor_frame ); k++ )
+                {
+                    if( frames[k]->i_type == X264_TYPE_B )
+                        num_bframes++;
+                }
+                if( h->lookahead->b_code_anchor_frame )
+                    h->lookahead->b_code_anchor_frame = 0;
+            }
+            else //AVC Path
+            {
+                while( num_bframes < num_frames && frames[num_bframes+1]->i_type == X264_TYPE_B )
+                    num_bframes++;
+            }
+#if defined(MVC_DEBUG_PRINT)
+            if( num_bframes == 0 )
+            {
+                printf("_________________________________________________________________\n");
+                if( num_frames >= 4 )
+                    printf("Right view flag = %d\n",frames[num_frames - 3]->b_right_view_flag);
+                if( num_frames >= 3 )
+                printf("Right view flag = %d\n",frames[num_frames - 2]->b_right_view_flag);
+                printf("Right view flag = %d\n",frames[num_frames - 1]->b_right_view_flag);
+                printf("Right view flag = %d\n",frames[num_frames - 0]->b_right_view_flag);
+                printf("_________________________________________________________________\n");
+            }
+#endif
+            if( h->param.b_mvc_flag )
+                h->lookahead->i_num_b_frames = num_bframes;
+
 #if defined(MVC_DEBUG_PRINT)
             printf( "number of B frames = %d\n",num_bframes );
-            for( int k = 0; k < num_frames; k++ )
+            for( int k = 0; k <=  num_frames ; k++ )
             {
                 char p_arr[40] = {'P','-','F','R','A','M','E','\0'};
                 char b_arr[40] = {'B','-','F','R','A','M','E','\0'};
-                char *p  = (( frames[k+1]->i_type == X264_TYPE_P ) ? p_arr : b_arr );
+                char *p  = (( frames[k]->i_type == X264_TYPE_P ) ? p_arr : b_arr );
                 printf( "Frame Type = %s\n", p );
             }
 #endif
@@ -1414,8 +1440,7 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
                 num_analysed_frames = j;
                 break;
             }
-
-        reset_start = keyframe ? 1 : X264_MIN( num_bframes+2, num_analysed_frames+1 );
+            reset_start = keyframe  ? 1 : X264_MIN( num_bframes+2, num_analysed_frames+1 );
     }
     /*
     ** No B frames, so all frames will be of P type
@@ -1464,6 +1489,7 @@ void x264_slicetype_decide( x264_t *h )
     int brefs;
     int i_nonbframes;
     int i_firstnonbidx = -1;
+    int i_num_b_frames;
 
     if( !h->lookahead->next.i_size )
         return;
@@ -1512,15 +1538,15 @@ void x264_slicetype_decide( x264_t *h )
              || (h->param.rc.i_vbv_buffer_size && h->param.rc.i_lookahead) )
         x264_slicetype_analyse( h, 0 );
 
+        /* Load the B frame statistics from lookahead thread */
+        i_num_b_frames = h->lookahead->i_num_b_frames;
+
     /*
     ** At this point the look ahead already decided the frame types in captured order.
     ** Go through the look ahead list. Loop through the list till a non-B or a non-B_REF frame.
     */
-#if defined(MVC_B_FRAME_CHANGES)
-    for( bframes = 0, brefs = 0, i_nonbframes = 0;; bframes++ )
-#else
+    i_nonbframes = 0;
     for( bframes = 0, brefs = 0;; bframes++ )
-#endif
     {
         frm = h->lookahead->next.list[bframes];
         if( frm->i_type == X264_TYPE_BREF && h->param.i_bframe_pyramid < X264_B_PYRAMID_NORMAL &&
@@ -1570,10 +1596,11 @@ void x264_slicetype_decide( x264_t *h )
         {
             /* Close GOP */
             h->lookahead->i_last_keyframe = frm->i_frame;
-#if defined(MVC_B_FRAME_CHANGES)
-            h->lookahead->b_code_anchor_frame = 1;
-            h->lookahead->b_early_termination = 1;
-#endif
+            if( h->param.b_mvc_flag )
+            {
+                h->lookahead->b_code_anchor_frame = 1;
+                h->lookahead->b_early_termination = 1;
+            }
             frm->b_keyframe = 1;
             if( bframes > 0 )
             {
@@ -1583,13 +1610,17 @@ void x264_slicetype_decide( x264_t *h )
         }
 
         if( bframes == h->param.i_bframe ||
-            !h->lookahead->next.list[bframes+1] )
+            !h->lookahead->next.list[bframes+2] )
         {
             if( IS_X264_TYPE_B( frm->i_type ) )
                 x264_log( h, X264_LOG_WARNING, "specified frame type is not compatible with max B-frames\n" );
             if( frm->i_type == X264_TYPE_AUTO
                 || IS_X264_TYPE_B( frm->i_type ) )
-                frm->i_type = X264_TYPE_P;
+                {
+                    frm->i_type = X264_TYPE_P;
+                    printf("Danger 2\n");
+                    //while(1) {}
+                }
         }
 
         if( frm->i_type == X264_TYPE_BREF )
@@ -1598,25 +1629,36 @@ void x264_slicetype_decide( x264_t *h )
         if( frm->i_type == X264_TYPE_AUTO )
             frm->i_type = X264_TYPE_B;
 
-#if !defined( MVC_B_FRAME_CHANGES )
-        else if( !IS_X264_TYPE_B( frm->i_type ) ) break;
-#else
-        else if( !IS_X264_TYPE_B( frm->i_type ) )
+        if( !h->param.b_mvc_flag )
         {
-            if( frm->i_type == X264_TYPE_IDR ) break;
-            if( h->lookahead->b_early_termination )
-            {
-                printf("Early Termination\n");
-                h->lookahead->b_early_termination = 0;
+            if( !IS_X264_TYPE_B( frm->i_type ) )
                 break;
-            }
-            i_nonbframes++;
-            if( i_nonbframes == 2 )
-                break;
-            else
-                i_firstnonbidx = bframes;
         }
-#endif
+        else
+        {
+            if( !IS_X264_TYPE_B( frm->i_type ) )
+            {
+                printf("i_num_b_frames = %d\n", i_num_b_frames);
+                if( frm->i_type == X264_TYPE_IDR ) break;
+                if( h->lookahead->b_early_termination )
+                {
+                    printf("Early Termination\n");
+                    h->lookahead->b_early_termination = 0;
+                    break;
+                }
+                if( i_num_b_frames )
+                {
+                    i_nonbframes++;
+                    if( i_nonbframes == 2 )
+                        break;
+                    else
+                        i_firstnonbidx = bframes;
+                }
+                /* No B frames in the current look ahead list */
+                else
+                    break;
+            }
+        }
     } //end of for
 
     if( bframes )
@@ -1634,22 +1676,23 @@ void x264_slicetype_decide( x264_t *h )
     if( h->param.i_bframe_pyramid && bframes > 1 && !brefs )
     {
         int i;
-#if !defined(MVC_B_FRAME_CHANGES)
-        h->lookahead->next.list[bframes/2]->i_type = X264_TYPE_BREF;
-#else
-#if defined(MVC_DEBUG_PRINT)
-        printf("Inserting a BREF in sequence\n");
-#endif
-        for( i = 0; i < bframes; i++ )
+        if( !h->param.b_mvc_flag )
+            h->lookahead->next.list[bframes/2]->i_type = X264_TYPE_BREF;
+        else
         {
-          if( h->lookahead->next.list[i]->i_type == X264_TYPE_B )
-               break;
-        }
 #if defined(MVC_DEBUG_PRINT)
-        printf("BREF index = %d\n",i);
+            printf("Inserting a BREF in sequence\n");
 #endif
-        h->lookahead->next.list[i]->i_type = X264_TYPE_BREF;
+            for( i = 0; i < bframes; i++ )
+            {
+              if( h->lookahead->next.list[i]->i_type == X264_TYPE_B )
+                   break;
+            }
+#if defined(MVC_DEBUG_PRINT)
+            printf("BREF index = %d\n",i);
 #endif
+            h->lookahead->next.list[i]->i_type = X264_TYPE_BREF;
+        }
         brefs++;
     }
 #endif
@@ -1707,21 +1750,25 @@ void x264_slicetype_decide( x264_t *h )
     int i_coded = h->lookahead->next.list[0]->i_frame;
     if( bframes )
     {
-#if !defined( MVC_B_FRAME_CHANGES )
-        int idx_list[] = { brefs+1, 1 };
-#else
         int idx_list[2];
-        if( bframes > 2 )
-        {
-            idx_list[0] = brefs+2;
-            idx_list[1] = 2;
-        }
-        else
+        if( !h->param.b_mvc_flag )
         {
             idx_list[0] = brefs+1;
             idx_list[1] = 1;
         }
-#endif
+        else
+        {
+            if( bframes > 2 )
+            {
+                idx_list[0] = brefs+2;
+                idx_list[1] = 2;
+            }
+            else
+            {
+                idx_list[0] = brefs+1;
+                idx_list[1] = 1;
+            }
+        }
 
 #if defined(MVC_DEBUG_PRINT)
         printf("bframes = %d\n",bframes);
@@ -1731,14 +1778,15 @@ void x264_slicetype_decide( x264_t *h )
 #endif
         for( int i = 0; i < bframes; i++ )
         {
-#if defined( MVC_B_FRAME_CHANGES)
-            if( h->lookahead->next.list[i]->i_type != X264_TYPE_BREF &&
-                h->lookahead->next.list[i]->i_type != X264_TYPE_B )
-            {
-               assert( i == i_firstnonbidx);
-               continue;
+            if( h->param.b_mvc_flag )
+                {
+                if( h->lookahead->next.list[i]->i_type != X264_TYPE_BREF &&
+                    h->lookahead->next.list[i]->i_type != X264_TYPE_B )
+                {
+                   assert( i == i_firstnonbidx);
+                   continue;
+                }
             }
-#endif
             int idx = idx_list[h->lookahead->next.list[i]->i_type == X264_TYPE_BREF]++;
 #if defined(MVC_DEBUG_PRINT)
             printf("index = %d\n",idx);
@@ -1746,31 +1794,39 @@ void x264_slicetype_decide( x264_t *h )
             frames[idx] = h->lookahead->next.list[i];
             frames[idx]->i_reordered_pts = h->lookahead->next.list[idx]->i_pts;
         }
-        frames[0] = h->lookahead->next.list[bframes];
-        frames[0]->i_reordered_pts = h->lookahead->next.list[0]->i_pts;
-#if defined( MVC_B_FRAME_CHANGES )
-        if( i_nonbframes == 2 )
+        if( lookahead_size != i_nonbframes )
         {
-            frames[1] = h->lookahead->next.list[i_firstnonbidx];
-            frames[1]->i_reordered_pts = h->lookahead->next.list[1]->i_pts;
-            /*
-            ** Make sure that the order is correct
-            */
-#if defined(MVC_DEBUG_PRINT)
-            printf("frames[0]->i_frame_num = %d\n",frames[0]->i_frame_num);
-            printf("frames[1]->i_frame_num = %d\n",frames[1]->i_frame_num);
-#endif
-            if( frames[1]->i_frame_num > frames[0]->i_frame_num)
+            frames[0] = h->lookahead->next.list[bframes];
+            frames[0]->i_reordered_pts = h->lookahead->next.list[0]->i_pts;
+        }
+        if( h->param.b_mvc_flag )
+        {
+            if( ( i_nonbframes == 2 && i_num_b_frames && lookahead_size > i_nonbframes ) ||
+                ( i_nonbframes == 2 && lookahead_size == i_nonbframes) )
             {
-#if defined(MVC_DEBUG_PRINT)
-                printf("swapping process\n");
-#endif
-                x264_frame_t *tmp = frames[1];
+                assert ( i_firstnonbidx != -1);
                 frames[1] = frames[0];
-                frames[0] = tmp;
+                frames[1]->i_reordered_pts = frames[0]->i_reordered_pts;
+                frames[0] = h->lookahead->next.list[i_firstnonbidx];
+                frames[0]->i_reordered_pts = h->lookahead->next.list[1]->i_pts;
+                /*
+                ** Make sure that the order is correct
+                */
+#if defined(MVC_DEBUG_PRINT)
+                printf("frames[0]->b_right_view_flag = %d\n",frames[0]->b_right_view_flag);
+                printf("frames[1]->b_right_view_flag = %d\n",frames[1]->b_right_view_flag);
+#endif
+                if( frames[1]->b_right_view_flag > frames[0]->b_right_view_flag )
+                {
+#if defined(MVC_DEBUG_PRINT)
+                    printf("swapping process\n");
+#endif
+                    x264_frame_t *tmp = frames[1];
+                    frames[1] = frames[0];
+                    frames[0] = tmp;
+                }
             }
         }
-#endif
         memcpy( h->lookahead->next.list, frames, (bframes+1) * sizeof(x264_frame_t*) );
     }
 
@@ -1790,7 +1846,6 @@ void x264_slicetype_decide( x264_t *h )
         printf("*******************************************\n");
     }
 #endif
-
     for( int i = 0; i <= bframes; i++ )
     {
         h->lookahead->next.list[i]->i_coded = i_coded++;
