@@ -93,8 +93,6 @@ static void x264_slice_header_init( x264_t *h, x264_slice_header_t *sh,
                                     int i_idr_pic_id, int i_frame, int i_qp )
 {
     x264_param_t *param = &h->param;
-    /* Temporal reference frame count in L0 for the same view component */
-    int list0_reorder_cnt = 0;
 
     /* First we fill all fields */
     sh->sps = sps;
@@ -105,6 +103,9 @@ static void x264_slice_header_init( x264_t *h, x264_slice_header_t *sh,
     sh->i_pps_id    = pps->i_id;
 
     sh->i_num_inter_view_pics = 0;
+
+    sh->list_reorder_cnt[0] = 0;
+    sh->list_reorder_cnt[1] = 0;
 
     /*
     ** Register the MVC flag
@@ -176,7 +177,7 @@ static void x264_slice_header_init( x264_t *h, x264_slice_header_t *sh,
             if( sh->b_ref_pic_list_reordering[list] )
             {
                 int pred_frame_num = i_frame;
-                for( int i = 0; i < h->i_ref[list]; i++,list0_reorder_cnt++ )
+                for( int i = 0; i < h->i_ref[list]; i++ )
                 {
                     int diff = h->fref[list][i]->i_frame_num - pred_frame_num;
                     sh->ref_pic_list_order[list][i].idc = ( diff > 0 );
@@ -202,12 +203,13 @@ static void x264_slice_header_init( x264_t *h, x264_slice_header_t *sh,
                 printf("curr frame num value = %d\n", i_frame);
 #endif
                 int pred_frame_num = i_frame/2;
-                for( int i = 0; i < h->i_ref[list]; i++,list0_reorder_cnt++ )
+                for( int i = 0; i < h->i_ref[list]; i++ )
                 {
                     int diff = ( h->fref[list][i]->i_frame_num/2 - pred_frame_num );
                     sh->ref_pic_list_order[list][i].idc = ( diff > 0 );
                     sh->ref_pic_list_order[list][i].arg = (abs(diff) - 1) & ((1 << sps->i_log2_max_frame_num) - 1);
                     pred_frame_num = h->fref[list][i]->i_frame_num/2;
+                    sh->list_reorder_cnt[list]++;
                 }
             }
         }
@@ -238,13 +240,13 @@ static void x264_slice_header_init( x264_t *h, x264_slice_header_t *sh,
             /*
             ** Reorder the inter-view picture and put it in 0th index of the list
             */
-            sh->ref_pic_list_order[0][list0_reorder_cnt].idc = 5;
-            sh->ref_pic_list_order[0][list0_reorder_cnt].arg = 0;
+            sh->ref_pic_list_order[0][sh->list_reorder_cnt[0]].idc = 5;
+            sh->ref_pic_list_order[0][sh->list_reorder_cnt[0]++].arg = 0;
             /*
             ** Duplicate the inter-view picture in the current view list
             */
-            sh->ref_pic_list_order[0][list0_reorder_cnt+1].idc = 5;
-            sh->ref_pic_list_order[0][list0_reorder_cnt+1].arg = 2;
+            sh->ref_pic_list_order[0][sh->list_reorder_cnt[0]].idc = 5;
+            sh->ref_pic_list_order[0][sh->list_reorder_cnt[0]++].arg = 2;
             /*
             ** When the number of dupes is more than 1.
             */
@@ -253,19 +255,18 @@ static void x264_slice_header_init( x264_t *h, x264_slice_header_t *sh,
                 /*
                 ** Duplicate the inter-view picture in the current view list
                 */
-                sh->ref_pic_list_order[0][list0_reorder_cnt+2].idc = 5;
-                sh->ref_pic_list_order[0][list0_reorder_cnt+2].arg = 2;
+                sh->ref_pic_list_order[0][sh->list_reorder_cnt[0]].idc = 5;
+                sh->ref_pic_list_order[0][sh->list_reorder_cnt[0]++].arg = 2;
             }
         }
         else
         {
-            sh->ref_pic_list_order[0][list0_reorder_cnt].idc = 5;
-            sh->ref_pic_list_order[0][list0_reorder_cnt].arg = 0;
+            sh->ref_pic_list_order[0][sh->list_reorder_cnt[0]].idc = 5;
+            sh->ref_pic_list_order[0][sh->list_reorder_cnt[0]++].arg = 0;
         }
     }
 
     sh->i_num_inter_view_pics = h->num_inter_view_pics;
-
     sh->i_cabac_init_idc = param->i_cabac_init_idc;
 
     sh->i_qp = SPEC_QP(i_qp);
@@ -376,7 +377,11 @@ static void x264_slice_header_write( bs_t *s, x264_slice_header_t *sh, int i_nal
             }
             else
             {
+#if 0
                 for( int i = 0; i < sh->i_num_ref_idx_l0_active; i++ )
+#else
+                for( int i = 0; i < sh->list_reorder_cnt[0]; i++ )
+#endif
                 {
                     bs_write_ue( s, sh->ref_pic_list_order[0][i].idc );
                     bs_write_ue( s, sh->ref_pic_list_order[0][i].arg );
@@ -390,7 +395,11 @@ static void x264_slice_header_write( bs_t *s, x264_slice_header_t *sh, int i_nal
         bs_write1( s, sh->b_ref_pic_list_reordering[1] );
         if( sh->b_ref_pic_list_reordering[1] )
         {
+#if 0
             for( int i = 0; i < sh->i_num_ref_idx_l1_active; i++ )
+#else
+            for( int i = 0; i < sh->list_reorder_cnt[1]; i++ )
+#endif
             {
                 bs_write_ue( s, sh->ref_pic_list_order[1][i].idc );
                 bs_write_ue( s, sh->ref_pic_list_order[1][i].arg );
@@ -1693,13 +1702,20 @@ static inline void x264_reference_check_reorder( x264_t *h )
             return;
         }
     for( int list = 0; list <= (h->sh.i_type == SLICE_TYPE_B); list++ )
-        for( int i = h->num_inter_view_pics; i < h->i_ref[list] - 1; i++ )
+        for( int i = ( list == 0 ? h->num_inter_view_pics : 0 ); i < h->i_ref[list] - 1; i++ )
         {
             int framenum_diff = h->fref[list][i+1]->i_frame_num - h->fref[list][i]->i_frame_num;
             int poc_diff = h->fref[list][i+1]->i_poc - h->fref[list][i]->i_poc;
             /* P and B-frames use different default orders. */
             if( h->sh.i_type == SLICE_TYPE_P ? framenum_diff > 0 : list == 1 ? poc_diff < 0 : poc_diff > 0 )
             {
+#if defined(MVC_DEBUG_PRINT)
+                printf("framenum_diff = %d\n",framenum_diff);
+                printf("Reordered List = %d\n",list);
+                printf("POC = %d\n",h->fref[list][i]->i_poc);printf("Frame num= %d\n",h->fref[list][i]->i_frame_num);
+                printf("Next POC = %d\n",h->fref[list][i+1]->i_poc);printf("Next Frame num= %d\n",h->fref[list][i+1]->i_frame_num);
+                if( !list ) printf("Reordering enabled\n");
+#endif
                 h->b_ref_reorder[list] = 1;
                 return;
             }
@@ -1738,8 +1754,10 @@ int x264_weighted_reference_duplicate( x264_t *h, int i_ref, const x264_weight_t
 
     if( ( h->param.b_mvc_flag && !h->fenc->b_right_view_flag ) ||
           !h->param.b_mvc_flag )
+    {
         /* shift the frames to make space for the dupe. */
         h->b_ref_reorder[0] = 1;
+    }
     else
     {
         /* Its a right view picture and the dupe belongs to left view.
@@ -1858,7 +1876,7 @@ static inline void x264_reference_build_list( x264_t *h, int i_poc )
     /* MVC re-ordering flag for list1 */
     h->b_mvc_list_reorder_flag[1] = 0;
     h->num_inter_view_pics = 0;
-
+    h->b_inter_view_pred_enabled = 0;
 
     /* build ref list 0/1 */
     /* h->i_ref[list] contains the count for the no of reference pictures for the list */
@@ -1907,18 +1925,19 @@ static inline void x264_reference_build_list( x264_t *h, int i_poc )
             if( h->frames.reference[i]->i_poc < i_poc )
             {
                 /* Current frame is left view type & reference picture is of right view type */
-                if( !( i_poc & 3 ) && ( h->frames.reference[i]->i_poc & 3 ) )
+                if( !( h->fdec->b_right_view_flag ) && ( h->frames.reference[i]->b_right_view_flag ) )
                     continue;
 
                 /* Current frame is right view type & reference picture is of left view type and captured at same time instant*/
-                else if( ( i_poc & 3 ) && !( h->frames.reference[i]->i_poc & 3) && ( i_poc - h->frames.reference[i]->i_poc == 2 ))
+                else if( ( h->fdec->b_right_view_flag ) && !( h->frames.reference[i]->b_right_view_flag ) && ( (i_poc/2) - h->frames.reference[i]->i_frame_num == 1 ))
                 {
                     h->fref[0][h->i_ref[0]++] = h->frames.reference[i];
                     ++h->num_inter_view_pics;
+                    h->b_inter_view_pred_enabled = 1;
                 }
 
                 /* Current frame is right view type & reference picture is of left view type */
-                else if( ( i_poc & 3 ) && !( h->frames.reference[i]->i_poc & 3) )
+                else if( ( h->fdec->b_right_view_flag ) && !( h->frames.reference[i]->b_right_view_flag) )
                     continue;
 
                 /* Same view picture, add the frame in to list0 */
@@ -1929,11 +1948,11 @@ static inline void x264_reference_build_list( x264_t *h, int i_poc )
             else if( h->frames.reference[i]->i_poc > i_poc )
             {
                 /* Current frame is left view type & reference picture is of right view type */
-                if( !( i_poc & 3 ) && ( h->frames.reference[i]->i_poc & 3 ) )
+                if( !( h->fdec->b_right_view_flag ) && ( h->frames.reference[i]->b_right_view_flag ) )
                     continue;
 
                     /* Current frame is right view type & reference picture is of left view type */
-                else if( ( i_poc & 3 ) && !( h->frames.reference[i]->i_poc & 3) )
+                else if( h->fdec->b_right_view_flag && !( h->frames.reference[i]->b_right_view_flag) )
                     continue;
 
                 /* Same view picture, add the frame in to list1 */
@@ -2001,7 +2020,7 @@ static inline void x264_reference_build_list( x264_t *h, int i_poc )
     */
     if( h->param.b_mvc_flag && h->fenc->b_right_view_flag )
     {
-        if( h->num_inter_view_pics )
+        if( h->num_inter_view_pics && h->b_inter_view_pred_enabled )
             h->b_mvc_list_reorder_flag[0] = 1;
         if( h->param.i_bframe )
             h->b_mvc_list_reorder_flag[1] = 1;
@@ -2078,9 +2097,17 @@ static inline void x264_reference_build_list( x264_t *h, int i_poc )
 
 #if defined(MVC_DEBUG_PRINT)
     /* Get the POC of the current list*/
+    printf("List0\n");
     for( int i = 0; i < h->i_ref[0]; i++ )
     {
         printf("Reference POC = %d\n",h->fref[0][i]->i_poc);
+    }
+
+    printf("List1\n");
+    /* Get the POC of the current list*/
+    for( int i = 0; i < h->i_ref[1]; i++ )
+    {
+        printf("Reference POC = %d\n",h->fref[1][i]->i_poc);
     }
 #endif
 }
@@ -2284,12 +2311,12 @@ static inline void x264_slice_init( x264_t *h, int i_nal_type, int i_global_qp )
         h->sh_backup = h->sh;
     }
 
-    /* In case of MVC, the presentation frame num is same so it was decided by 2 in the slice header.
+    /* In case of MVC, the presentation frame num is same so it was divided by 2 in the slice header.
     ** But, internal to x264 encoder, frame numbers are incrementing irrespective of the view they belongs to,
     ** so multiply by two.
     */
     if( h->param.b_mvc_flag )
-        h->fdec->i_frame_num = ( h->sh.i_frame_num << 1 );
+        h->fdec->i_frame_num = ( h->sh.i_frame_num << 1 ) + h->fenc->b_right_view_flag;
      else
         h->fdec->i_frame_num = h->sh.i_frame_num;
 
@@ -2972,9 +2999,9 @@ int     x264_encoder_encode( x264_t *h,
     h->sh.i_mmco_remove_from_end = 0;
     h->b_ref_reorder[0] =
     h->b_ref_reorder[1] = 0;
-
     h->fdec->i_poc =
     h->fenc->i_poc = 2 * ( h->fenc->i_frame - X264_MAX( h->frames.i_last_idr, 0 ) );
+    h->fdec->b_right_view_flag = h->fenc->b_right_view_flag;
 
     /* ------------------- Setup frame context ----------------------------- */
     /* 5: Init data dependent of frame type */

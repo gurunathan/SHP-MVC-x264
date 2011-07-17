@@ -44,6 +44,9 @@
 static void x264_lookahead_shift( x264_sync_frame_list_t *dst, x264_sync_frame_list_t *src, int count )
 {
     int i = count;
+#if defined(MVC_DEBUG_PRINT)
+    printf("Lookahead shift = %d\n",count);
+#endif
     while( i-- )
     {
         assert( dst->i_size < dst->i_max_size );

@@ -347,11 +347,18 @@ typedef struct
     int i_num_ref_idx_l1_active;
 
     int b_ref_pic_list_reordering[2];
+    int b_mvc_list_reordering; // Inter view prediction is possible only with List0
     struct
     {
         int idc;
         int arg;
     } ref_pic_list_order[2][X264_REF_MAX];
+
+    struct
+    {
+        int idc;
+        int arg;
+    } mvc_ref_pic_list_order[X264_REF_MAX];
 
     /* P-frame weighting */
     x264_weight_t weight[X264_REF_MAX*2][3];
@@ -385,6 +392,8 @@ typedef struct
     /* MVC flag */
     int i_mvc_flag;
 
+    /* Reorder count */
+    int list_reorder_cnt[2];
 } x264_slice_header_t;
 
 typedef struct x264_lookahead_t
@@ -861,6 +870,8 @@ struct x264_t
     x264_quant_function_t quantf;
     x264_deblock_function_t loopf;
     x264_bitstream_function_t bsf;
+    /* Inter view prediction enabled or not */
+    int b_inter_view_pred_enabled;
     int num_inter_view_pics; /* Number of inter view pictures */
     int b_mvc_list_reorder_flag[2]; /* List re-ordering for MVC */
 

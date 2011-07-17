@@ -1360,14 +1360,19 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
             if( h->param.b_mvc_flag )
             {
                 if( num_frames >= 4 )
-                    frames[num_frames - 3]->i_type = X264_TYPE_P;//hack for testing
+                {
+                    frames[num_frames - 3]->i_type = X264_TYPE_B;
+                }
                 if( num_frames >= 3 )
-                    frames[num_frames - 2]->i_type = X264_TYPE_P;//hack for testing
+                {
+                    frames[num_frames - 2]->i_type = X264_TYPE_B;//hack for testing
+                }
                 /* End P frame for the left view component */
                 frames[num_frames - 1]->i_type = X264_TYPE_P;
             }
             /* End P frame for the right view component */
             frames[num_frames]->i_type = X264_TYPE_P;
+
             /*
             ** In case of MVC, the view component after the IDR view component
             ** should be of type 'P', because this is an anchor view component.
@@ -1610,7 +1615,7 @@ void x264_slicetype_decide( x264_t *h )
         }
 
         if( bframes == h->param.i_bframe ||
-            !h->lookahead->next.list[bframes+2] )
+            !h->lookahead->next.list[bframes+1] )
         {
             if( IS_X264_TYPE_B( frm->i_type ) )
                 x264_log( h, X264_LOG_WARNING, "specified frame type is not compatible with max B-frames\n" );
@@ -1618,8 +1623,6 @@ void x264_slicetype_decide( x264_t *h )
                 || IS_X264_TYPE_B( frm->i_type ) )
                 {
                     frm->i_type = X264_TYPE_P;
-                    printf("Danger 2\n");
-                    //while(1) {}
                 }
         }
 
@@ -1638,11 +1641,15 @@ void x264_slicetype_decide( x264_t *h )
         {
             if( !IS_X264_TYPE_B( frm->i_type ) )
             {
+#if defined( MVC_DEBUG_PRINT )
                 printf("i_num_b_frames = %d\n", i_num_b_frames);
+#endif
                 if( frm->i_type == X264_TYPE_IDR ) break;
                 if( h->lookahead->b_early_termination )
                 {
+#if defined( MVC_DEBUG_PRINT )
                     printf("Early Termination\n");
+#endif
                     h->lookahead->b_early_termination = 0;
                     break;
                 }
@@ -1664,38 +1671,40 @@ void x264_slicetype_decide( x264_t *h )
     if( bframes )
         h->lookahead->next.list[bframes-1]->b_last_minigop_bframe = 1;
     h->lookahead->next.list[bframes]->i_bframes = bframes;
-
     /*
-    ** In case of MVC, the picture types of both the views should be same.
-    ** Commenting this out for the time being.
-    ** Todo: When one of the views has B_REF type, mark the other view picture
+    ** When one of the views has B_REF type, mark the other view picture
     ** also of B_REF type.
     */
-#if 0
     /* insert a bref into the sequence */
     if( h->param.i_bframe_pyramid && bframes > 1 && !brefs )
     {
         int i;
         if( !h->param.b_mvc_flag )
+        {
             h->lookahead->next.list[bframes/2]->i_type = X264_TYPE_BREF;
+            brefs++;
+        }
         else
         {
 #if defined(MVC_DEBUG_PRINT)
             printf("Inserting a BREF in sequence\n");
 #endif
+            int pic_type = i_num_b_frames ? X264_TYPE_B : X264_TYPE_P;
             for( i = 0; i < bframes; i++ )
             {
-              if( h->lookahead->next.list[i]->i_type == X264_TYPE_B )
+              if( ( h->lookahead->next.list[i]->i_type == pic_type ) && ( !h->lookahead->next.list[i]->b_right_view_flag) )
                    break;
             }
 #if defined(MVC_DEBUG_PRINT)
             printf("BREF index = %d\n",i);
 #endif
             h->lookahead->next.list[i]->i_type = X264_TYPE_BREF;
+            brefs++;
+            h->lookahead->next.list[i+1]->i_type = X264_TYPE_BREF;
+            brefs++;
         }
-        brefs++;
+
     }
-#endif
 
     /* calculate the frame costs ahead of time for x264_rc_analyse_slice while we still have lowres */
     if( h->param.rc.i_rc_method != X264_RC_CQP )
@@ -1805,10 +1814,19 @@ void x264_slicetype_decide( x264_t *h )
                 ( i_nonbframes == 2 && lookahead_size == i_nonbframes) )
             {
                 assert ( i_firstnonbidx != -1);
-                frames[1] = frames[0];
-                frames[1]->i_reordered_pts = frames[0]->i_reordered_pts;
-                frames[0] = h->lookahead->next.list[i_firstnonbidx];
-                frames[0]->i_reordered_pts = h->lookahead->next.list[1]->i_pts;
+#if 0
+                // To keep the order as it is (Right view first)
+                frames[1] = h->lookahead->next.list[i_firstnonbidx];
+                frames[1]->i_reordered_pts = h->lookahead->next.list[1]->i_pts;
+#else
+                // Swap the two P frames (Left P first)
+                frames[1] = h->lookahead->next.list[i_firstnonbidx];
+                frames[1]->i_reordered_pts = h->lookahead->next.list[1]->i_pts;
+                frames[1]->b_right_view_flag = 1;
+                frames[0] = h->lookahead->next.list[bframes];
+                frames[0]->i_reordered_pts = h->lookahead->next.list[0]->i_pts;
+                frames[0]->b_right_view_flag = 0;
+#endif
                 /*
                 ** Make sure that the order is correct
                 */
@@ -1816,15 +1834,6 @@ void x264_slicetype_decide( x264_t *h )
                 printf("frames[0]->b_right_view_flag = %d\n",frames[0]->b_right_view_flag);
                 printf("frames[1]->b_right_view_flag = %d\n",frames[1]->b_right_view_flag);
 #endif
-                if( frames[1]->b_right_view_flag > frames[0]->b_right_view_flag )
-                {
-#if defined(MVC_DEBUG_PRINT)
-                    printf("swapping process\n");
-#endif
-                    x264_frame_t *tmp = frames[1];
-                    frames[1] = frames[0];
-                    frames[0] = tmp;
-                }
             }
         }
         memcpy( h->lookahead->next.list, frames, (bframes+1) * sizeof(x264_frame_t*) );
