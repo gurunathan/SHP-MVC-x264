@@ -1819,13 +1819,23 @@ void x264_slicetype_decide( x264_t *h )
                 frames[1] = h->lookahead->next.list[i_firstnonbidx];
                 frames[1]->i_reordered_pts = h->lookahead->next.list[1]->i_pts;
 #else
+#if 1
                 // Swap the two P frames (Left P first)
                 frames[1] = h->lookahead->next.list[i_firstnonbidx];
-                frames[1]->i_reordered_pts = h->lookahead->next.list[1]->i_pts;
+                frames[1]->i_reordered_pts = h->lookahead->next.list[0]->i_pts;
+                frames[1]->i_dts = h->lookahead->next.list[0]->i_dts;
+                frames[1]->i_pts = h->lookahead->next.list[0]->i_pts;
                 frames[1]->b_right_view_flag = 1;
                 frames[0] = h->lookahead->next.list[bframes];
-                frames[0]->i_reordered_pts = h->lookahead->next.list[0]->i_pts;
+                frames[0]->i_reordered_pts = h->lookahead->next.list[1]->i_pts;
+                frames[0]->i_dts = h->lookahead->next.list[1]->i_dts;
+                frames[0]->i_pts = h->lookahead->next.list[1]->i_pts;
                 frames[0]->b_right_view_flag = 0;
+#else
+                x264_frame_t *tmp = frames[0];
+                frames[0] = frames[1];
+                frames[1] = tmp;
+#endif
 #endif
                 /*
                 ** Make sure that the order is correct

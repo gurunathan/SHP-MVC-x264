@@ -373,6 +373,7 @@ typedef struct x264_param_t
         int         i_qp_step;      /* max QP step between frames */
 
         int         i_bitrate;
+        int         i_mvc_bitrate;  /* Bit rate for MVC bit stream (Including both views) */
         float       f_rf_constant;  /* 1pass VBR, nominal QP */
         float       f_rf_constant_max;  /* In CRF mode, maximum CRF as caused by VBV */
         float       f_rate_tolerance;
@@ -707,6 +708,8 @@ typedef struct
     int     b_keyframe;
     /* In: whether this is a right view frame. used for 3D MVC encoding */
     uint8_t b_right_view_flag;
+    /* In: Whether this frame is available for inter-view prediction or not */
+    uint8_t b_avail_for_inter_view_pred;
     /* In: user pts, Out: pts of encoded picture (user)*/
     int64_t i_pts;
     /* Out: frame dts. When the pts of the first frame is close to zero,

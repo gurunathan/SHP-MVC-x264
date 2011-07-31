@@ -30,6 +30,8 @@
 #define _ISOC99_SOURCE
 #undef NDEBUG // always check asserts, the speed effect is far too small to disable them
 
+#define MVC_DEBUG_PRINT
+
 #include "common/common.h"
 #include "ratecontrol.h"
 #include "me.h"
@@ -75,8 +77,14 @@ struct x264_ratecontrol_t
     int b_2pass;
     int b_vbv;
     int b_vbv_min_rate;
+    /*
+    ** In case of MVC, this is the fps for the single view.
+    ** So effectively, total fps = 2 * fps. Since, there are two
+    ** constraints needs to be satisfied (base & total), keep the fps as it is.
+    */
     double fps;
     double bitrate;
+    double mvc_bitrate; /* bitrate for the right view(enhanced view) frames */
     double rate_tolerance;
     double qcompress;
     int nmb;                    /* number of macroblocks in a frame */
@@ -103,10 +111,11 @@ struct x264_ratecontrol_t
     /* ABR stuff */
     int    last_satd;
     double last_rceq;
-    double cplxr_sum;           /* sum of bits*qscale/rceq */
-    double expected_bits_sum;   /* sum of qscale2bits after rceq, ratefactor, and overflow, only includes finished frames */
-    int64_t filler_bits_sum;    /* sum in bits of finished frames' filler data */
-    double wanted_bits_window;  /* target bitrate * window */
+    double cplxr_sum;              /* sum of bits*qscale/rceq */
+    double expected_bits_sum;      /* sum of qscale2bits after rceq, ratefactor, and overflow, only includes finished frames */
+    int64_t filler_bits_sum;       /* sum in bits of finished frames' filler data */
+    double wanted_bits_window;     /* target bitrate * window */
+    double wanted_bits_window_mvc; /* wanted bits window for the right view frames of MVC */
     double cbr_decay;
     double short_term_cplxsum;
     double short_term_cplxcount;
@@ -578,6 +587,12 @@ int x264_ratecontrol_new( x264_t *h )
         rc->qcompress = h->param.rc.f_qcompress;
 
     rc->bitrate = h->param.rc.i_bitrate * 1000.;
+    if( h->param.b_mvc_flag )
+    {
+        /* The input MVC bitrate is the total (including both views),
+        for the right view frames, subtract the base view rate */
+        rc->mvc_bitrate = ( h->param.rc.i_mvc_bitrate - h->param.rc.i_bitrate )  * 1000.;
+	}
     rc->rate_tolerance = h->param.rc.f_rate_tolerance;
     rc->nmb = h->mb.i_mb_count;
     rc->last_non_b_pict_type = -1;
@@ -624,7 +639,19 @@ int x264_ratecontrol_new( x264_t *h )
         rc->accum_p_qp = ABR_INIT_QP * rc->accum_p_norm;
         /* estimated ratio that produces a reasonable QP for the first I-frame */
         rc->cplxr_sum = .01 * pow( 7.0e5, rc->qcompress ) * pow( h->mb.i_mb_count, 0.5 );
+
+        /*
+        ** wanted_bits_window = bitrate/framerate;
+        ** i.e.(Bits / sec) * (sec/frame) = Bits/frame
+        ** So, wanted_bits_window = Bits per frame based on available bit rate
+        */
         rc->wanted_bits_window = 1.0 * rc->bitrate / rc->fps;
+
+        /* For MVC, set the right view bits per frame according to the right view bitrate */
+        if( h->param.b_mvc_flag )
+        {
+            rc->wanted_bits_window_mvc = 1.0 * rc->mvc_bitrate / rc->fps;
+        }
         rc->last_non_b_pict_type = SLICE_TYPE_I;
     }
 
@@ -1200,6 +1227,7 @@ void x264_ratecontrol_start( x264_t *h, int i_force_qp, int overhead )
     {
         memset( h->fdec->i_row_bits, 0, h->mb.i_mb_height * sizeof(int) );
         rc->row_pred = &rc->row_preds[h->sh.i_type];
+        //<gurunath> : Take care of this for MVC
         rc->buffer_rate = h->fenc->i_cpb_duration * rc->vbv_max_rate * h->sps->vui.i_num_units_in_tick / h->sps->vui.i_time_scale;
         update_vbv_plan( h, overhead );
 
@@ -1240,6 +1268,8 @@ void x264_ratecontrol_start( x264_t *h, int i_force_qp, int overhead )
     {
         q = i_force_qp - 1;
     }
+
+    // ABR case (or) CBR case
     else if( rc->b_abr )
     {
         q = qscale2qp( rate_estimate_qscale( h ) );
@@ -1608,8 +1638,23 @@ int x264_ratecontrol_end( x264_t *h, int bits, int *filler )
             rc->cplxr_sum += bits * qp2qscale( rc->qpa_rc ) / (rc->last_rceq * fabs( h->param.rc.f_pb_factor ));
         }
         rc->cplxr_sum *= rc->cbr_decay;
-        rc->wanted_bits_window += h->fenc->f_duration * rc->bitrate;
-        rc->wanted_bits_window *= rc->cbr_decay;
+
+        /*
+        ** Adjustments to the bits per frame after encoding a frame.
+        ** Update the wanted_bits_window based on view type.
+        */
+        // Legacy AVC (or) MVC left view frame
+        if( !h->param.b_mvc_flag || ( h->param.b_mvc_flag && !h->fenc->b_right_view_flag ) )
+        {
+            rc->wanted_bits_window += h->fenc->f_duration * rc->bitrate;
+            rc->wanted_bits_window *= rc->cbr_decay;
+        }
+        //MVC right view frame
+        else
+        {
+            rc->wanted_bits_window_mvc += h->fenc->f_duration * rc->mvc_bitrate;
+            rc->wanted_bits_window_mvc *= rc->cbr_decay;
+        }
     }
 
     if( rc->b_2pass )
@@ -1682,7 +1727,8 @@ fail:
  ***************************************************************************/
 
 /**
- * modify the bitrate curve from pass1 for one frame
+ * modify the bitrate curve from pass1 for one frame.
+ * For ABR/CBR, first pass is the complexity analysis on a sub-sampled frame.
  */
 static double get_qscale(x264_t *h, ratecontrol_entry_t *rce, double rate_factor, int frame_num)
 {
@@ -1691,6 +1737,7 @@ static double get_qscale(x264_t *h, ratecontrol_entry_t *rce, double rate_factor
     double q = pow( rce->blurred_complexity, 1 - rcc->qcompress );
 
     // avoid NaN's in the rc_eq
+    // Is this possible to have texture bits and MV bits as zero ?
     if( !isfinite(q) || rce->tex_bits + rce->mv_bits == 0 )
         q = rcc->last_qscale_for[rce->pict_type];
     else
@@ -2034,6 +2081,14 @@ static float rate_estimate_qscale( x264_t *h )
     x264_ratecontrol_t *rcc = h->rc;
     ratecontrol_entry_t UNINIT(rce);
     int pict_type = h->sh.i_type;
+
+    /*
+    **	Total bits indicates bits consumed so far.
+    ** i.e. total_bits = bits_spent_for_previous_frames - filler data.
+    ** Filler data are empty NALs just to satisfy the bitrate requirements.
+    ** total_bits = i_frame_size(in bytes) * 8 - filler NAL data
+    **/
+    // <gurunath>: MVC should use same view pictures
     int64_t total_bits = 8*(h->stat.i_frame_size[SLICE_TYPE_I]
                           + h->stat.i_frame_size[SLICE_TYPE_P]
                           + h->stat.i_frame_size[SLICE_TYPE_B])
@@ -2185,12 +2240,16 @@ static float rate_estimate_qscale( x264_t *h )
 
             double wanted_bits, overflow = 1;
 
+            /* Get the frame complexity (in terms of SATD) */
             rcc->last_satd = x264_rc_analyse_slice( h );
             rcc->short_term_cplxsum *= 0.5;
             rcc->short_term_cplxcount *= 0.5;
+
+            /* Calculate complexity based on SATD */
             rcc->short_term_cplxsum += rcc->last_satd / (CLIP_DURATION(h->fenc->f_duration) / BASE_FRAME_DURATION);
             rcc->short_term_cplxcount ++;
 
+            //Is the SATD equivalent to the texture bits?
             rce.tex_bits = rcc->last_satd;
             rce.blurred_complexity = rcc->short_term_cplxsum / rcc->short_term_cplxcount;
             rce.mv_bits = 0;
@@ -2206,7 +2265,27 @@ static float rate_estimate_qscale( x264_t *h )
             }
             else
             {
-                q = get_qscale( h, &rce, rcc->wanted_bits_window / rcc->cplxr_sum, h->fenc->i_frame );
+                /*
+                **  wanted_bits_window : Bits available for the current frame
+                **  cplxr_sum : Sum complexity for the current frame
+                **  so, wanted_bits_window/cplxr_sum : Will give bit rate factor
+                **  Get the frame QP based on bits available for the current frame & complexity
+                */
+                // Legacy AVC (or) MVC left view frame
+                if( !h->param.b_mvc_flag || ( h->param.b_mvc_flag && !h->fenc->b_right_view_flag ) )
+                {
+                    q = get_qscale( h, &rce, rcc->wanted_bits_window / rcc->cplxr_sum, h->fenc->i_frame );
+#if defined( MVC_DEBUG_PRINT )
+                    printf("QP in the base layer = %f\n",q);
+#endif
+                }
+                else //MVC right view frame
+                {
+                    q = get_qscale( h, &rce, rcc->wanted_bits_window_mvc / rcc->cplxr_sum, h->fenc->i_frame );
+#if defined( MVC_DEBUG_PRINT )
+                    printf("QP in the enhancement layer = %f\n",q);
+#endif
+                }
 
                 /* ABR code can potentially be counterproductive in CBR, so just don't bother.
                  * Don't run it if the frame complexity is zero either. */

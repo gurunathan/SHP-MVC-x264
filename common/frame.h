@@ -159,6 +159,9 @@ typedef struct x264_frame
 
     /* right view (or) left view for MVC */
     uint8_t b_right_view_flag;
+
+    /* Whether this frame is available for inter-view prediction or not */
+    uint8_t b_avail_for_inter_view_pred;
 } x264_frame_t;
 
 /* synchronized frame list */

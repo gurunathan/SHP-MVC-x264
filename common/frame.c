@@ -93,6 +93,7 @@ x264_frame_t *x264_frame_new( x264_t *h, int b_fdec )
     frame->i_coded_fields_lookahead =
     frame->i_cpb_delay_lookahead = -1;
     frame->b_right_view_flag = 0;
+    frame->b_avail_for_inter_view_pred = 0;
 
     frame->orig = frame;
 

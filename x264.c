@@ -738,6 +738,7 @@ static void help( x264_param_t *defaults, int longhelp )
     H0( "      --frames <integer>      Maximum number of frames to encode\n" );
     H0( "      --level <string>        Specify level (as defined by Annex A)\n" );
     H1( "      --stereo-mvc            Enable stereo MVC support\n" );
+    H1( "      --mvc-bitrate           MVC bitrate( Including both the views)\n" );
     H1( "      --bluray-compat         Enable compatibility hacks for Blu-ray support\n" );
     H1( "\n" );
     H1( "  -v, --verbose               Print stats for each frame\n" );
@@ -831,6 +832,7 @@ static struct option long_options[] =
     { "b-pyramid",   required_argument, NULL, 0 },
     { "open-gop",          no_argument, NULL, 0 },
     { "stereo-mvc",        no_argument, NULL, 0 },
+    { "mvc-bitrate", required_argument, NULL, 0 },
     { "bluray-compat",     no_argument, NULL, 0 },
     { "min-keyint",  required_argument, NULL, 'i' },
     { "keyint",      required_argument, NULL, 'I' },
@@ -1708,6 +1710,7 @@ static int encode( x264_param_t *param, cli_opt_t *opt )
             pic.i_pts = i_frame;
 
         pic.b_right_view_flag = 0;
+        pic.b_avail_for_inter_view_pred = 0;
         /* Every alternate picture is of right view type, used by MVC */
         if( (i_frame & 1) && ( param->b_mvc_flag ) )
             pic.b_right_view_flag = 1;

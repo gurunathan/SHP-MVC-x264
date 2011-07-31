@@ -899,6 +899,11 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
         p->rc.i_qp_constant = atoi(value);
         p->rc.i_rc_method = X264_RC_CQP;
     }
+    OPT("mvc-bitrate")
+    {
+        p->rc.i_mvc_bitrate = atoi(value);
+		b_error |= ( p->rc.i_mvc_bitrate <= p->rc.i_bitrate );
+    }
     OPT("crf")
     {
         p->rc.f_rf_constant = atof(value);
@@ -1238,6 +1243,7 @@ char *x264_param2string( x264_param_t *p, int b_res )
     s += sprintf( s, " decimate=%d", p->analyse.b_dct_decimate );
     s += sprintf( s, " interlaced=%s", p->b_interlaced ? p->b_tff ? "tff" : "bff" : p->b_fake_interlaced ? "fake" : "0" );
     s += sprintf( s, " stereo-mvc=%d", p->b_mvc_flag );
+    s += sprintf( s, " mvc-bitrate=%d", p->rc.i_mvc_bitrate );
     s += sprintf( s, " bluray_compat=%d", p->b_bluray_compat );
 
     s += sprintf( s, " constrained_intra=%d", p->b_constrained_intra );

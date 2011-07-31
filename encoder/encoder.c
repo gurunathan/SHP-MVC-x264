@@ -1929,13 +1929,14 @@ static inline void x264_reference_build_list( x264_t *h, int i_poc )
                     continue;
 
                 /* Current frame is right view type & reference picture is of left view type and captured at same time instant*/
+                //else if( ( h->fdec->b_right_view_flag ) && ( !h->frames.reference[i]->b_right_view_flag ) && ( h->frames.reference[i]->b_avail_for_inter_view_pred ))
                 else if( ( h->fdec->b_right_view_flag ) && !( h->frames.reference[i]->b_right_view_flag ) && ( (i_poc/2) - h->frames.reference[i]->i_frame_num == 1 ))
                 {
                     h->fref[0][h->i_ref[0]++] = h->frames.reference[i];
                     ++h->num_inter_view_pics;
                     h->b_inter_view_pred_enabled = 1;
+                    h->frames.reference[i]->b_avail_for_inter_view_pred = 0;
                 }
-
                 /* Current frame is right view type & reference picture is of left view type */
                 else if( ( h->fdec->b_right_view_flag ) && !( h->frames.reference[i]->b_right_view_flag) )
                     continue;
@@ -1951,7 +1952,7 @@ static inline void x264_reference_build_list( x264_t *h, int i_poc )
                 if( !( h->fdec->b_right_view_flag ) && ( h->frames.reference[i]->b_right_view_flag ) )
                     continue;
 
-                    /* Current frame is right view type & reference picture is of left view type */
+                /* Current frame is right view type & reference picture is of left view type */
                 else if( h->fdec->b_right_view_flag && !( h->frames.reference[i]->b_right_view_flag) )
                     continue;
 
@@ -2096,18 +2097,25 @@ static inline void x264_reference_build_list( x264_t *h, int i_poc )
     h->mb.pic.i_fref[1] = h->i_ref[1];
 
 #if defined(MVC_DEBUG_PRINT)
+    printf("\n");
+    printf("**********************************************\n");
+    printf("Current POC = %d\n",i_poc);
     /* Get the POC of the current list*/
     printf("List0\n");
     for( int i = 0; i < h->i_ref[0]; i++ )
     {
         printf("Reference POC = %d\n",h->fref[0][i]->i_poc);
     }
-
-    printf("List1\n");
-    /* Get the POC of the current list*/
-    for( int i = 0; i < h->i_ref[1]; i++ )
+    printf("**********************************************\n");
+    if( h->i_ref[1] )
     {
-        printf("Reference POC = %d\n",h->fref[1][i]->i_poc);
+        printf("List1\n");
+        /* Get the POC of the current list*/
+        for( int i = 0; i < h->i_ref[1]; i++ )
+        {
+            printf("Reference POC = %d\n",h->fref[1][i]->i_poc);
+        }
+        printf("**********************************************\n");
     }
 #endif
 }
@@ -3003,6 +3011,10 @@ int     x264_encoder_encode( x264_t *h,
     h->fenc->i_poc = 2 * ( h->fenc->i_frame - X264_MAX( h->frames.i_last_idr, 0 ) );
     h->fdec->b_right_view_flag = h->fenc->b_right_view_flag;
 
+    /* Left view pictures are available for inter-view prediction of the subsequent right view picture */
+    if( ( !h->fdec->b_right_view_flag ) && h->param.b_mvc_flag )
+          h->fdec->b_avail_for_inter_view_pred = 1;
+
     /* ------------------- Setup frame context ----------------------------- */
     /* 5: Init data dependent of frame type */
     if( h->fenc->i_type == X264_TYPE_IDR )
@@ -3293,6 +3305,7 @@ int     x264_encoder_encode( x264_t *h,
     /* Init the rate control */
     /* FIXME: Include slice header bit cost. */
     x264_ratecontrol_start( h, h->fenc->i_qpplus1, overhead*8 );
+    // Make sure the calculated QP is within the min & max QP range
     i_global_qp = x264_ratecontrol_qp( h );
 
     pic_out->i_qpplus1 =
@@ -3408,6 +3421,8 @@ static int x264_encoder_frame_end( x264_t *h, x264_t *thread_current,
 
     /* update rc */
     int filler = 0;
+    /* Update rate control state */
+    // <gurunath> : Need to modify for MVC
     if( x264_ratecontrol_end( h, frame_size * 8, &filler ) < 0 )
         return -1;
 
