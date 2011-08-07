@@ -30,7 +30,7 @@
 #define _ISOC99_SOURCE
 #undef NDEBUG // always check asserts, the speed effect is far too small to disable them
 
-#define MVC_DEBUG_PRINT
+//#define MVC_DEBUG_PRINT
 
 #include "common/common.h"
 #include "ratecontrol.h"
@@ -133,6 +133,7 @@ struct x264_ratecontrol_t
     double pb_offset;
 
     /* ABR stuff for right view frames of MVC */
+    // Todo: Some of the parameters are not used. Clean up needs to be done.
     int    last_satd_mvc;
     double last_rceq_mvc;
     double cplxr_sum_mvc;              /* sum of bits*qscale/rceq */
