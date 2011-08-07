@@ -373,7 +373,6 @@ typedef struct x264_param_t
         int         i_qp_step;      /* max QP step between frames */
 
         int         i_bitrate;
-        int         i_mvc_bitrate;  /* Bit rate for MVC bit stream (Including both views) */
         float       f_rf_constant;  /* 1pass VBR, nominal QP */
         float       f_rf_constant_max;  /* In CRF mode, maximum CRF as caused by VBV */
         float       f_rate_tolerance;
@@ -382,6 +381,12 @@ typedef struct x264_param_t
         float       f_vbv_buffer_init; /* <=1: fraction of buffer_size. >1: kbit */
         float       f_ip_factor;
         float       f_pb_factor;
+
+        /* ABR/CBR for MVC */
+        int         i_mvc_bitrate;  /* Bit rate for MVC bit stream (Including both views) */
+        int         i_mvc_vbv_max_bitrate; /* Max VBV bit rate for the right view frames */
+        int         i_mvc_vbv_buffer_size; /* VBV buffer size for the right view frames */
+        float       f_mvc_vbv_buffer_init; /* <=1: fraction of buffer_size. >1: kbit */
 
         int         i_aq_mode;      /* psy adaptive QP. (X264_AQ_*) */
         float       f_aq_strength;

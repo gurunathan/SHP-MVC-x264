@@ -577,6 +577,8 @@ static void help( x264_param_t *defaults, int longhelp )
     H1( "      --rc-lookahead <integer> Number of frames for frametype lookahead [%d]\n", defaults->rc.i_lookahead );
     H0( "      --vbv-maxrate <integer> Max local bitrate (kbit/s) [%d]\n", defaults->rc.i_vbv_max_bitrate );
     H0( "      --vbv-bufsize <integer> Set size of the VBV buffer (kbit) [%d]\n", defaults->rc.i_vbv_buffer_size );
+    H0( "      --mvc-vbv-maxrate <integer> Max local bitrate (kbit/s) [%d]\n", defaults->rc.i_mvc_vbv_max_bitrate );
+    H0( "      --mvc-vbv-bufsize <integer> Set size of the VBV buffer (kbit) [%d]\n", defaults->rc.i_mvc_vbv_buffer_size );
     H2( "      --vbv-init <float>      Initial VBV buffer occupancy [%.1f]\n", defaults->rc.f_vbv_buffer_init );
     H2( "      --crf-max <float>       With CRF+VBV, limit RF to this value\n"
         "                                  May cause VBV underflows!\n" );
@@ -901,6 +903,8 @@ static struct option long_options[] =
     { "vbv-maxrate", required_argument, NULL, 0 },
     { "vbv-bufsize", required_argument, NULL, 0 },
     { "vbv-init",    required_argument, NULL, 0 },
+    { "mvc-vbv-maxrate", required_argument, NULL, 0 },
+    { "mvc-vbv-bufsize", required_argument, NULL, 0 },
     { "crf-max",     required_argument, NULL, 0 },
     { "ipratio",     required_argument, NULL, 0 },
     { "pbratio",     required_argument, NULL, 0 },

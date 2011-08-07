@@ -96,6 +96,11 @@ void x264_param_default( x264_param_t *param )
     param->rc.i_vbv_max_bitrate = 0;
     param->rc.i_vbv_buffer_size = 0;
     param->rc.f_vbv_buffer_init = 0.9;
+    /* MVC rate control related */
+    param->rc.i_mvc_bitrate = 0;
+    param->rc.i_mvc_vbv_max_bitrate = 0;
+    param->rc.i_mvc_vbv_buffer_size = 0;
+    param->rc.f_mvc_vbv_buffer_init = 0.9;
     param->rc.i_qp_constant = 23 + QP_BD_OFFSET;
     param->rc.f_rf_constant = 23;
     param->rc.i_qp_min = 0;
@@ -902,7 +907,7 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
     OPT("mvc-bitrate")
     {
         p->rc.i_mvc_bitrate = atoi(value);
-		b_error |= ( p->rc.i_mvc_bitrate <= p->rc.i_bitrate );
+        b_error |= ( p->rc.i_mvc_bitrate <= p->rc.i_bitrate );
     }
     OPT("crf")
     {
@@ -927,6 +932,12 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
         p->rc.i_vbv_buffer_size = atoi(value);
     OPT("vbv-init")
         p->rc.f_vbv_buffer_init = atof(value);
+    OPT("mvc-vbv-maxrate")
+        p->rc.i_mvc_vbv_max_bitrate = atoi(value);
+    OPT("mvc-vbv-bufsize")
+        p->rc.i_mvc_vbv_buffer_size = atoi(value);
+    OPT("mvc-vbv-init")
+        p->rc.f_mvc_vbv_buffer_init = atof(value);
     OPT2("ipratio", "ip-factor")
         p->rc.f_ip_factor = atof(value);
     OPT2("pbratio", "pb-factor")
@@ -1282,6 +1293,8 @@ char *x264_param2string( x264_param_t *p, int b_res )
         if( p->rc.b_stat_read )
             s += sprintf( s, " cplxblur=%.1f qblur=%.1f",
                           p->rc.f_complexity_blur, p->rc.f_qblur );
+
+        /* <gurunath> : Add MVC related prints here */
         if( p->rc.i_vbv_buffer_size )
         {
             s += sprintf( s, " vbv_maxrate=%d vbv_bufsize=%d",

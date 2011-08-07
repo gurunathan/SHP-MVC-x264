@@ -819,6 +819,12 @@ struct x264_t
         int64_t i_frame_size[3];
         double  f_frame_qp[3];
         int     i_consecutive_bframes[X264_BFRAME_MAX+1];
+
+        /* per slice info of MVC right view frames */
+        int     i_frame_count_mvc[3];
+        int64_t i_frame_size_mvc[3];
+        double  f_frame_qp_mvc[3];
+
         /* */
         double  f_ssd_global[3];
         double  f_psnr_average[3];

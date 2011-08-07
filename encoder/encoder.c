@@ -730,6 +730,41 @@ static int x264_validate_parameters( x264_t *h )
         h->param.rc.i_vbv_max_bitrate = 0;
     }
 
+    /*
+    ** Validate the VBV buffer size & VBV max bit rate values in case of MVC
+    */
+    if( h->param.b_mvc_flag )
+    {
+        if( h->param.rc.i_mvc_vbv_buffer_size )
+        {
+            if( h->param.rc.i_mvc_vbv_max_bitrate == 0 )
+            {
+                if( h->param.rc.i_rc_method == X264_RC_ABR )
+                {
+                    x264_log( h, X264_LOG_WARNING, "VBV maxrate unspecified, assuming CBR\n" );
+                    h->param.rc.i_mvc_vbv_max_bitrate = h->param.rc.i_mvc_bitrate;
+                }
+                else
+                {
+                    // Only CBR is supported for MVC
+                    x264_log( h, X264_LOG_WARNING, "VBV bufsize set but maxrate unspecified, ignored\n" );
+                    h->param.rc.i_mvc_vbv_buffer_size = 0;
+                }
+            }
+            else if( h->param.rc.i_mvc_vbv_max_bitrate < h->param.rc.i_mvc_bitrate &&
+                     h->param.rc.i_rc_method == X264_RC_ABR )
+            {
+                x264_log( h, X264_LOG_WARNING, "max bitrate less than average bitrate, assuming CBR\n" );
+                h->param.rc.i_mvc_vbv_max_bitrate = h->param.rc.i_mvc_bitrate;
+            }
+        }
+        else if( h->param.rc.i_mvc_vbv_max_bitrate )
+        {
+            x264_log( h, X264_LOG_WARNING, "VBV maxrate specified, but no bufsize, ignored\n" );
+            h->param.rc.i_mvc_vbv_max_bitrate = 0;
+        }
+    }
+
     if( h->param.b_interlaced && h->param.i_slice_max_size )
     {
         x264_log( h, X264_LOG_WARNING, "interlaced + slice-max-size is not implemented\n" );
@@ -3463,7 +3498,12 @@ static int x264_encoder_frame_end( x264_t *h, x264_t *thread_current,
 
     /* Slice stat */
     h->stat.i_frame_count[h->sh.i_type]++;
-    h->stat.i_frame_size[h->sh.i_type] += frame_size;
+    // Legacy AVC (or) MVC left view frame
+    if( !h->param.b_mvc_flag || ( h->param.b_mvc_flag && !h->fenc->b_right_view_flag ) )
+        h->stat.i_frame_size[h->sh.i_type] += frame_size;
+    // MVC right view frame
+    else
+        h->stat.i_frame_size_mvc[h->sh.i_type] += frame_size;
     h->stat.f_frame_qp[h->sh.i_type] += h->fdec->f_qp_avg_aq;
 
     for( int i = 0; i < X264_MBTYPE_MAX; i++ )
@@ -3753,11 +3793,18 @@ void    x264_encoder_close  ( x264_t *h )
         const int i_count = h->stat.i_frame_count[SLICE_TYPE_I] +
                             h->stat.i_frame_count[SLICE_TYPE_P] +
                             h->stat.i_frame_count[SLICE_TYPE_B];
-        const double duration = h->stat.f_frame_duration[SLICE_TYPE_I] +
-                                h->stat.f_frame_duration[SLICE_TYPE_P] +
-                                h->stat.f_frame_duration[SLICE_TYPE_B];
+        const double duration = ( h->stat.f_frame_duration[SLICE_TYPE_I] +
+                                  h->stat.f_frame_duration[SLICE_TYPE_P] +
+                                  h->stat.f_frame_duration[SLICE_TYPE_B] );
         int64_t i_mb_count = (int64_t)i_count * h->mb.i_mb_count;
-        float f_bitrate = SUM3(h->stat.i_frame_size) / duration / 125;
+        float f_bitrate     = SUM3(h->stat.i_frame_size) / duration / 125;
+        float f_bitrate_mvc = SUM3(h->stat.i_frame_size_mvc) / duration / 125;
+        /*
+        ** In case of MVC, the f_bitrate corresponds to left view frames only.
+        ** Hence, the duration is half of the total duration.
+        */
+        if( h->param.b_mvc_flag)
+            f_bitrate     = SUM3(h->stat.i_frame_size) / duration / 125;
 
         if( h->pps->b_transform_8x8_mode )
         {
@@ -3872,7 +3919,11 @@ void    x264_encoder_close  ( x264_t *h )
                       f_bitrate );
         }
         else
+        {
             x264_log( h, X264_LOG_INFO, "kb/s:%.2f\n", f_bitrate );
+            if( h->param.b_mvc_flag )
+                x264_log( h, X264_LOG_INFO, "MVC kb/s:%.2f\n", ( f_bitrate_mvc + f_bitrate ) );
+        }
     }
 
     /* rc */

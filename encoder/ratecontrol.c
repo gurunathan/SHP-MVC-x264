@@ -77,6 +77,8 @@ struct x264_ratecontrol_t
     int b_2pass;
     int b_vbv;
     int b_vbv_min_rate;
+    int b_mvc_vbv_min_rate;
+
     /*
     ** In case of MVC, this is the fps for the single view.
     ** So effectively, total fps = 2 * fps. Since, there are two
@@ -108,6 +110,14 @@ struct x264_ratecontrol_t
     int single_frame_vbv;
     double rate_factor_max_increment; /* Don't allow RF above (CRF + this value). */
 
+    /* VBV stuff  for MVC */
+    double mvc_buffer_size;
+    int64_t mvc_buffer_fill_final;
+    double mvc_buffer_fill;         /* planned buffer, if all in-progress frames hit their bit budget */
+    double mvc_buffer_rate;         /* # of bits added to buffer_fill after each frame */
+    double mvc_vbv_max_rate;        /* # of bits added to buffer_fill per second */
+    int    mvc_single_frame_vbv;    /* VBV for single frame */
+
     /* ABR stuff */
     int    last_satd;
     double last_rceq;
@@ -115,13 +125,26 @@ struct x264_ratecontrol_t
     double expected_bits_sum;      /* sum of qscale2bits after rceq, ratefactor, and overflow, only includes finished frames */
     int64_t filler_bits_sum;       /* sum in bits of finished frames' filler data */
     double wanted_bits_window;     /* target bitrate * window */
-    double wanted_bits_window_mvc; /* wanted bits window for the right view frames of MVC */
     double cbr_decay;
     double short_term_cplxsum;
     double short_term_cplxcount;
     double rate_factor_constant;
     double ip_offset;
     double pb_offset;
+
+    /* ABR stuff for right view frames of MVC */
+    int    last_satd_mvc;
+    double last_rceq_mvc;
+    double cplxr_sum_mvc;              /* sum of bits*qscale/rceq */
+    double expected_bits_sum_mvc;      /* sum of qscale2bits after rceq, ratefactor, and overflow, only includes finished frames */
+    int64_t filler_bits_sum_mvc;       /* sum in bits of finished frames' filler data */
+    double wanted_bits_window_mvc;     /* wanted bits window for the right view frames of MVC */
+    double cbr_decay_mvc;
+    double short_term_cplxsum_mvc;
+    double short_term_cplxcount_mvc;
+    double rate_factor_constant_mvc;
+    double ip_offset_mvc;
+    double pb_offset_mvc;
 
     /* 2pass stuff */
     FILE *p_stat_file_out;
@@ -176,6 +199,8 @@ static int init_pass2(x264_t *);
 static float rate_estimate_qscale( x264_t *h );
 static int update_vbv( x264_t *h, int bits );
 static void update_vbv_plan( x264_t *h, int overhead );
+static int update_mvc_vbv( x264_t *h, int bits );
+static void update_mvc_vbv_plan( x264_t *h, int overhead );
 static double predict_size( predictor_t *p, double q, double var );
 static void update_predictor( predictor_t *p, double q, double var, double bits );
 
@@ -558,6 +583,53 @@ void x264_ratecontrol_init_reconfigurable( x264_t *h, int b_init )
                           && h->param.rc.i_vbv_max_bitrate <= h->param.rc.i_bitrate;
         }
     }
+
+    /*
+    ** Initializations for the right view frames of MVC.
+    ** Note: The MVC buffer & bit rate etc are for the right view frames only,
+    ** eventhough the name has MVC suffix in it.
+    ** At present only CBR is supported and NAL HRD support is yet to be done
+    */
+    if( h->param.b_mvc_flag)
+    {
+        //Assumed that the fps of the right view is same as that of left base view.
+        if( h->param.rc.i_mvc_vbv_buffer_size < (int)(h->param.rc.i_mvc_vbv_max_bitrate / rc->fps) )
+        {
+            h->param.rc.i_mvc_vbv_buffer_size = h->param.rc.i_mvc_vbv_max_bitrate / rc->fps;
+            x264_log( h, X264_LOG_WARNING, "MVC VBV buffer size cannot be smaller than one frame, using %d kbit\n",
+                      h->param.rc.i_mvc_vbv_buffer_size );
+        }
+
+        /* We don't support changing the ABR bitrate right now,
+           so if the stream starts as CBR, keep it CBR. */
+        if( rc->b_mvc_vbv_min_rate )
+            h->param.rc.i_mvc_vbv_max_bitrate = h->param.rc.i_mvc_bitrate;
+
+        int mvc_vbv_buffer_size = h->param.rc.i_mvc_vbv_buffer_size * 1000;
+        int mvc_vbv_max_bitrate = h->param.rc.i_mvc_vbv_max_bitrate * 1000;
+
+        // HRD support : To be added
+        rc->mvc_buffer_rate  = mvc_vbv_max_bitrate / rc->fps;
+        rc->mvc_vbv_max_rate = mvc_vbv_max_bitrate;
+        rc->mvc_buffer_size = mvc_vbv_buffer_size;
+        rc->mvc_single_frame_vbv = rc->mvc_buffer_rate * 1.1 > rc->mvc_buffer_size;
+        rc->cbr_decay_mvc = 1.0 - rc->mvc_buffer_rate / rc->mvc_buffer_size
+                      * 0.5 * X264_MAX(0, 1.5 - rc->mvc_buffer_rate * rc->fps / rc->mvc_bitrate);
+        if( b_init )
+        {
+            if( h->param.rc.f_mvc_vbv_buffer_init > 1. )
+                h->param.rc.f_mvc_vbv_buffer_init = x264_clip3f( h->param.rc.f_mvc_vbv_buffer_init / h->param.rc.i_mvc_vbv_buffer_size, 0, 1 );
+            h->param.rc.f_mvc_vbv_buffer_init = x264_clip3f( X264_MAX( h->param.rc.f_mvc_vbv_buffer_init, rc->mvc_buffer_rate / rc->mvc_buffer_size ), 0, 1);
+            // Assume the same VUI parameters as that of base layer
+            rc->mvc_buffer_fill_final = rc->buffer_size * h->param.rc.f_vbv_buffer_init * h->sps->vui.i_time_scale;
+            //rc->b_mvc_vbv = 1;
+            rc->b_mvc_vbv_min_rate = !rc->b_2pass
+                          && h->param.rc.i_rc_method == X264_RC_ABR
+                          && h->param.rc.i_mvc_vbv_max_bitrate <= h->param.rc.i_mvc_bitrate;
+        }
+
+    } /* End of MVC check */
+
 }
 
 int x264_ratecontrol_new( x264_t *h )
@@ -572,11 +644,24 @@ int x264_ratecontrol_new( x264_t *h )
     rc->b_abr = h->param.rc.i_rc_method != X264_RC_CQP && !h->param.rc.b_stat_read;
     rc->b_2pass = h->param.rc.i_rc_method == X264_RC_ABR && h->param.rc.b_stat_read;
 
-    /* FIXME: use integers */
-    if( h->param.i_fps_num > 0 && h->param.i_fps_den > 0 )
-        rc->fps = (float) h->param.i_fps_num / h->param.i_fps_den;
+    // Legacy AVC case
+    if( !h->param.b_mvc_flag )
+    {
+        /* FIXME: use integers */
+        if( h->param.i_fps_num > 0 && h->param.i_fps_den > 0 )
+            rc->fps = (float) h->param.i_fps_num / h->param.i_fps_den;
+        else
+            rc->fps = 25.0;
+    }
+    //MVC case
     else
-        rc->fps = 25.0;
+    {
+        /* FIXME: use integers */
+        if( h->param.i_fps_num > 0 && h->param.i_fps_den > 0 )
+            rc->fps = (float) ( ( h->param.i_fps_num / 2 ) / h->param.i_fps_den );
+        else
+            rc->fps = 25.0;
+    }
 
     if( h->param.rc.b_mb_tree )
     {
@@ -592,7 +677,7 @@ int x264_ratecontrol_new( x264_t *h )
         /* The input MVC bitrate is the total (including both views),
         for the right view frames, subtract the base view rate */
         rc->mvc_bitrate = ( h->param.rc.i_mvc_bitrate - h->param.rc.i_bitrate )  * 1000.;
-	}
+    }
     rc->rate_tolerance = h->param.rc.f_rate_tolerance;
     rc->nmb = h->mb.i_mb_count;
     rc->last_non_b_pict_type = -1;
@@ -646,12 +731,19 @@ int x264_ratecontrol_new( x264_t *h )
         ** So, wanted_bits_window = Bits per frame based on available bit rate
         */
         rc->wanted_bits_window = 1.0 * rc->bitrate / rc->fps;
-
+#if defined(MVC_DEBUG_PRINT)
+        printf( "Wanted bits window = %f\n",rc->wanted_bits_window );
+#endif
         /* For MVC, set the right view bits per frame according to the right view bitrate */
         if( h->param.b_mvc_flag )
         {
+            /* estimated ratio that produces a reasonable QP for the first I-frame */
+            rc->cplxr_sum_mvc = .01 * pow( 7.0e5, rc->qcompress ) * pow( h->mb.i_mb_count, 0.5 );
             rc->wanted_bits_window_mvc = 1.0 * rc->mvc_bitrate / rc->fps;
         }
+#if defined(MVC_DEBUG_PRINT)
+        printf( "Wanted bits window mvc = %f\n",rc->wanted_bits_window_mvc );
+#endif
         rc->last_non_b_pict_type = SLICE_TYPE_I;
     }
 
@@ -1227,9 +1319,18 @@ void x264_ratecontrol_start( x264_t *h, int i_force_qp, int overhead )
     {
         memset( h->fdec->i_row_bits, 0, h->mb.i_mb_height * sizeof(int) );
         rc->row_pred = &rc->row_preds[h->sh.i_type];
-        //<gurunath> : Take care of this for MVC
-        rc->buffer_rate = h->fenc->i_cpb_duration * rc->vbv_max_rate * h->sps->vui.i_num_units_in_tick / h->sps->vui.i_time_scale;
-        update_vbv_plan( h, overhead );
+        // Legacy AVC (or) MVC left view frame
+        if( !h->param.b_mvc_flag || ( h->param.b_mvc_flag && !h->fenc->b_right_view_flag ) )
+        {
+            rc->buffer_rate = h->fenc->i_cpb_duration * rc->vbv_max_rate * h->sps->vui.i_num_units_in_tick / h->sps->vui.i_time_scale;
+            update_vbv_plan( h, overhead );
+        }
+        // MVC right view frame
+        else
+        {
+            rc->mvc_buffer_rate = h->fenc->i_cpb_duration * rc->mvc_vbv_max_rate * h->sps->vui.i_num_units_in_tick / h->sps->vui.i_time_scale;
+            update_mvc_vbv_plan( h, overhead );
+        }
 
         const x264_level_t *l = x264_levels;
         while( l->level_idc != 0 && l->level_idc != h->param.i_level_idc )
@@ -1630,14 +1731,27 @@ int x264_ratecontrol_end( x264_t *h, int bits, int *filler )
     if( rc->b_abr )
     {
         if( h->sh.i_type != SLICE_TYPE_B )
-            rc->cplxr_sum += bits * qp2qscale( rc->qpa_rc ) / rc->last_rceq;
+        {
+            // Legacy AVC (or) MVC left view frame
+            if( !h->param.b_mvc_flag || ( h->param.b_mvc_flag && !h->fenc->b_right_view_flag ) )
+            {
+                rc->cplxr_sum += bits * qp2qscale( rc->qpa_rc ) / rc->last_rceq;
+                rc->cplxr_sum *= rc->cbr_decay;
+            }
+            //MVC right view frame
+            else
+            {
+                rc->cplxr_sum_mvc += bits * qp2qscale( rc->qpa_rc ) / rc->last_rceq;
+                rc->cplxr_sum_mvc *= rc->cbr_decay;
+            }
+        }
         else
         {
             /* Depends on the fact that B-frame's QP is an offset from the following P-frame's.
              * Not perfectly accurate with B-refs, but good enough. */
             rc->cplxr_sum += bits * qp2qscale( rc->qpa_rc ) / (rc->last_rceq * fabs( h->param.rc.f_pb_factor ));
+            rc->cplxr_sum *= rc->cbr_decay;
         }
-        rc->cplxr_sum *= rc->cbr_decay;
 
         /*
         ** Adjustments to the bits per frame after encoding a frame.
@@ -1674,8 +1788,16 @@ int x264_ratecontrol_end( x264_t *h, int bits, int *filler )
         }
     }
 
-    *filler = update_vbv( h, bits );
-    rc->filler_bits_sum += *filler * 8;
+    if( !h->param.b_mvc_flag || ( h->param.b_mvc_flag && !h->fenc->b_right_view_flag ) )
+    {
+        *filler = update_vbv( h, bits );
+        rc->filler_bits_sum += *filler * 8;
+    }
+    else
+    {
+        *filler = update_mvc_vbv( h, bits );
+        rc->filler_bits_sum_mvc += *filler * 8;
+    }
 
     if( h->sps->vui.b_nal_hrd_parameters_present )
     {
@@ -1886,6 +2008,53 @@ static int update_vbv( x264_t *h, int bits )
     return filler;
 }
 
+static int update_mvc_vbv( x264_t *h, int bits )
+{
+    int filler = 0;
+#if 0
+    /*
+    ** NAL HRD is not supported for MVC
+    */
+    int bitrate = h->sps->vui.hrd.i_bit_rate_unscaled;
+#else
+    int bitrate = h->rc->mvc_vbv_max_rate;
+#endif
+    x264_ratecontrol_t *rcc = h->rc;
+    x264_ratecontrol_t *rct = h->thread[0]->rc;
+#if 0
+    uint64_t buffer_size = (uint64_t)h->sps->vui.hrd.i_cpb_size_unscaled * h->sps->vui.i_time_scale;
+#else
+    uint64_t buffer_size = (uint64_t)2048000 * h->sps->vui.i_time_scale;
+#endif
+
+    if( rcc->last_satd >= h->mb.i_mb_count )
+        update_predictor( &rct->pred[h->sh.i_type], qp2qscale( rcc->qpa_rc ), rcc->last_satd, bits );
+
+    if( !rcc->b_vbv )
+        return filler;
+
+    rct->mvc_buffer_fill_final -= (uint64_t)bits * h->sps->vui.i_time_scale;
+
+    if( rct->mvc_buffer_fill_final < 0 )
+        x264_log( h, X264_LOG_WARNING, "VBV underflow (frame %d, %.0f bits)\n", h->i_frame, (double)rct->mvc_buffer_fill_final / h->sps->vui.i_time_scale );
+    rct->mvc_buffer_fill_final = X264_MAX( rct->mvc_buffer_fill_final, 0 );
+    rct->mvc_buffer_fill_final += (uint64_t)bitrate * h->sps->vui.i_num_units_in_tick * h->fenc->i_cpb_duration;
+
+#if 0 //NAL HRD is not supported for MVC case
+    if( h->sps->vui.hrd.b_cbr_hrd && rct->buffer_fill_final > buffer_size )
+    {
+        int64_t scale = (int64_t)h->sps->vui.i_time_scale * 8;
+        filler = (rct->buffer_fill_final - buffer_size + scale - 1) / scale;
+        bits = X264_MAX( (FILLER_OVERHEAD - h->param.b_annexb), filler ) * 8;
+        rct->buffer_fill_final -= (uint64_t)bits * h->sps->vui.i_time_scale;
+    }
+    else
+#endif
+        rct->mvc_buffer_fill_final = X264_MIN( rct->buffer_fill_final, buffer_size );
+
+    return filler;
+}
+
 void x264_hrd_fullness( x264_t *h )
 {
     x264_ratecontrol_t *rct = h->thread[0]->rc;
@@ -1927,6 +2096,31 @@ static void update_vbv_plan( x264_t *h, int overhead )
     }
     rcc->buffer_fill = X264_MIN( rcc->buffer_fill, rcc->buffer_size );
     rcc->buffer_fill -= overhead;
+}
+
+// provisionally update MVC VBV according to the planned size of all frames currently in progress
+static void update_mvc_vbv_plan( x264_t *h, int overhead )
+{
+    x264_ratecontrol_t *rcc = h->rc;
+    rcc->mvc_buffer_fill = h->thread[0]->rc->mvc_buffer_fill_final / h->sps->vui.i_time_scale;
+    if( h->i_thread_frames > 1 )
+    {
+        int j = h->rc - h->thread[0]->rc;
+        for( int i = 1; i < h->i_thread_frames; i++ )
+        {
+            x264_t *t = h->thread[ (j+i)%h->i_thread_frames ];
+            double bits = t->rc->frame_size_planned;
+            if( !t->b_thread_active )
+                continue;
+            bits  = X264_MAX(bits, t->rc->frame_size_estimated);
+            rcc->mvc_buffer_fill -= bits;
+            rcc->mvc_buffer_fill = X264_MAX( rcc->mvc_buffer_fill, 0 );
+            rcc->mvc_buffer_fill += t->rc->mvc_buffer_rate;
+            rcc->mvc_buffer_fill = X264_MIN( rcc->mvc_buffer_fill, rcc->mvc_buffer_size );
+        }
+    }
+    rcc->mvc_buffer_fill = X264_MIN( rcc->mvc_buffer_fill, rcc->mvc_buffer_size );
+    rcc->mvc_buffer_fill -= overhead;
 }
 
 // apply VBV constraints and clip qscale to between lmin and lmax
@@ -2081,19 +2275,28 @@ static float rate_estimate_qscale( x264_t *h )
     x264_ratecontrol_t *rcc = h->rc;
     ratecontrol_entry_t UNINIT(rce);
     int pict_type = h->sh.i_type;
-
+    int64_t total_bits;
     /*
     **	Total bits indicates bits consumed so far.
     ** i.e. total_bits = bits_spent_for_previous_frames - filler data.
     ** Filler data are empty NALs just to satisfy the bitrate requirements.
     ** total_bits = i_frame_size(in bytes) * 8 - filler NAL data
     **/
-    // <gurunath>: MVC should use same view pictures
-    int64_t total_bits = 8*(h->stat.i_frame_size[SLICE_TYPE_I]
-                          + h->stat.i_frame_size[SLICE_TYPE_P]
-                          + h->stat.i_frame_size[SLICE_TYPE_B])
-                       - rcc->filler_bits_sum;
-
+    // Legacy AVC (or) MVC left view frame
+    if( !h->param.b_mvc_flag || ( h->param.b_mvc_flag && !h->fenc->b_right_view_flag ) )
+    {
+        total_bits = 8*(h->stat.i_frame_size[SLICE_TYPE_I]
+                      + h->stat.i_frame_size[SLICE_TYPE_P]
+                      + h->stat.i_frame_size[SLICE_TYPE_B])
+                      - rcc->filler_bits_sum;
+    }
+    else //MVC right view frame
+    {
+        total_bits = 8*(h->stat.i_frame_size_mvc[SLICE_TYPE_I]
+                      + h->stat.i_frame_size_mvc[SLICE_TYPE_P]
+                      + h->stat.i_frame_size_mvc[SLICE_TYPE_B])
+                      - rcc->filler_bits_sum_mvc;
+    }
     if( rcc->b_2pass )
     {
         rce = *rcc->rce;
@@ -2153,6 +2356,7 @@ static float rate_estimate_qscale( x264_t *h )
 
         if( rcc->b_2pass )
         {
+            printf("inside 2pass rc\n");
             double lmin = rcc->lmin[pict_type];
             double lmax = rcc->lmax[pict_type];
             int64_t diff;
@@ -2281,7 +2485,7 @@ static float rate_estimate_qscale( x264_t *h )
                 }
                 else //MVC right view frame
                 {
-                    q = get_qscale( h, &rce, rcc->wanted_bits_window_mvc / rcc->cplxr_sum, h->fenc->i_frame );
+                    q = get_qscale( h, &rce, rcc->wanted_bits_window_mvc / rcc->cplxr_sum_mvc, h->fenc->i_frame );
 #if defined( MVC_DEBUG_PRINT )
                     printf("QP in the enhancement layer = %f\n",q);
 #endif
@@ -2345,6 +2549,11 @@ static float rate_estimate_qscale( x264_t *h )
         if( !(rcc->b_2pass && !rcc->b_vbv) && h->fenc->i_frame == 0 )
             rcc->last_qscale_for[SLICE_TYPE_P] = q * fabs( h->param.rc.f_ip_factor );
 
+        /*
+        ** At this stage, the quantization value and the complexity of the frame has been
+        ** already been calculated.
+        ** Now, calculate the planned frame size using the above values.
+        */
         if( rcc->b_2pass && rcc->b_vbv )
             rcc->frame_size_planned = qscale2bits(&rce, q);
         else
