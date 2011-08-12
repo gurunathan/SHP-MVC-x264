@@ -3798,13 +3798,19 @@ void    x264_encoder_close  ( x264_t *h )
                                   h->stat.f_frame_duration[SLICE_TYPE_B] );
         int64_t i_mb_count = (int64_t)i_count * h->mb.i_mb_count;
         float f_bitrate     = SUM3(h->stat.i_frame_size) / duration / 125;
-        float f_bitrate_mvc = SUM3(h->stat.i_frame_size_mvc) / duration / 125;
+
+        /*
+        ** f_bitrate_mvc represents the bitrate of the right view frames.
+        ** Duration is halved due to alternate right and left view frames.
+        */
+        float f_bitrate_mvc = SUM3(h->stat.i_frame_size_mvc) / ( duration / 2 ) / 125;
+
         /*
         ** In case of MVC, the f_bitrate corresponds to left view frames only.
         ** Hence, the duration is half of the total duration.
         */
         if( h->param.b_mvc_flag)
-            f_bitrate     = SUM3(h->stat.i_frame_size) / duration / 125;
+            f_bitrate     = SUM3(h->stat.i_frame_size) / ( duration / 2 ) / 125;
 
         if( h->pps->b_transform_8x8_mode )
         {

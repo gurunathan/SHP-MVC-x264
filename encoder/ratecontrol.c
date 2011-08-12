@@ -133,7 +133,6 @@ struct x264_ratecontrol_t
     double pb_offset;
 
     /* ABR stuff for right view frames of MVC */
-    // Todo: Some of the parameters are not used. Clean up needs to be done.
     double cplxr_sum_mvc;              /* sum of bits*qscale/rceq */
     int64_t filler_bits_sum_mvc;       /* sum in bits of finished frames' filler data */
     double wanted_bits_window_mvc;     /* wanted bits window for the right view frames of MVC */
@@ -636,27 +635,11 @@ int x264_ratecontrol_new( x264_t *h )
     rc->b_abr = h->param.rc.i_rc_method != X264_RC_CQP && !h->param.rc.b_stat_read;
     rc->b_2pass = h->param.rc.i_rc_method == X264_RC_ABR && h->param.rc.b_stat_read;
 
-    // Legacy AVC case
-    if( !h->param.b_mvc_flag )
-    {
-        /* FIXME: use integers */
-        if( h->param.i_fps_num > 0 && h->param.i_fps_den > 0 )
-            rc->fps = (float) h->param.i_fps_num / h->param.i_fps_den;
-        else
-            rc->fps = 25.0;
-    }
-    //MVC case
+    /* FIXME: use integers */
+    if( h->param.i_fps_num > 0 && h->param.i_fps_den > 0 )
+        rc->fps = (float) h->param.i_fps_num / h->param.i_fps_den;
     else
-    {
-        /* FIXME: use integers */
-        /*
-        ** In case of stereo MVC, the supplied frame rate includes both left and right views.
-        */
-        if( h->param.i_fps_num > 0 && h->param.i_fps_den > 0 )
-            rc->fps = (float) ( ( h->param.i_fps_num / 2 ) / h->param.i_fps_den );
-        else
-            rc->fps = 25.0;
-    }
+        rc->fps = 25.0;
 
     if( h->param.rc.b_mb_tree )
     {
@@ -2099,6 +2082,9 @@ static int update_vbv( x264_t *h, int bits )
     x264_ratecontrol_t *rcc = h->rc;
     x264_ratecontrol_t *rct = h->thread[0]->rc;
     uint64_t buffer_size = (uint64_t)h->sps->vui.hrd.i_cpb_size_unscaled * h->sps->vui.i_time_scale;
+#if defined(MVC_DEBUG_PRINT)
+    printf("AVC:bits = %d\n",bits);
+#endif
 
     if( rcc->last_satd >= h->mb.i_mb_count )
         update_predictor( &rct->pred[h->sh.i_type], qp2qscale( rcc->qpa_rc ), rcc->last_satd, bits );
@@ -2142,9 +2128,12 @@ static int update_mvc_vbv( x264_t *h, int bits )
 #if 0
     uint64_t buffer_size = (uint64_t)h->sps->vui.hrd.i_cpb_size_unscaled * h->sps->vui.i_time_scale;
 #else
-    uint64_t buffer_size = (uint64_t)2048000 * h->sps->vui.i_time_scale;
+    uint64_t buffer_size = (uint64_t)4096000 * h->sps->vui.i_time_scale;
 #endif
 
+#if defined(MVC_DEBUG_PRINT)
+    printf("MVC:bits = %d\n",bits);
+#endif
     if( rcc->last_satd >= h->mb.i_mb_count )
         update_predictor( &rct->pred[h->sh.i_type], qp2qscale( rcc->qpa_rc ), rcc->last_satd, bits );
 
@@ -2160,15 +2149,17 @@ static int update_mvc_vbv( x264_t *h, int bits )
 
 #if 0 //NAL HRD is not supported for MVC case
     if( h->sps->vui.hrd.b_cbr_hrd && rct->buffer_fill_final > buffer_size )
+#else
+    if( rct->mvc_buffer_fill_final > buffer_size )
+#endif
     {
         int64_t scale = (int64_t)h->sps->vui.i_time_scale * 8;
-        filler = (rct->buffer_fill_final - buffer_size + scale - 1) / scale;
+        filler = (rct->mvc_buffer_fill_final - buffer_size + scale - 1) / scale;
         bits = X264_MAX( (FILLER_OVERHEAD - h->param.b_annexb), filler ) * 8;
-        rct->buffer_fill_final -= (uint64_t)bits * h->sps->vui.i_time_scale;
+        rct->mvc_buffer_fill_final -= (uint64_t)bits * h->sps->vui.i_time_scale;
     }
     else
-#endif
-        rct->mvc_buffer_fill_final = X264_MIN( rct->buffer_fill_final, buffer_size );
+        rct->mvc_buffer_fill_final = X264_MIN( rct->mvc_buffer_fill_final, buffer_size );
 
     return filler;
 }
