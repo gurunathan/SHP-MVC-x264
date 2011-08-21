@@ -327,6 +327,7 @@ typedef struct x264_param_t
     int         i_log_level;
     int         b_visualize;
     char        *psz_dump_yuv;  /* filename for reconstructed frames */
+    char        *psz_mvc_dump_yuv;  /* filename for reconstructed frames of right view (used in MVC) */
 
     /* Encoder analyser parameters */
     struct

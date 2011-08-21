@@ -68,13 +68,35 @@ static double x264_ssim( double ssim )
 
 static void x264_frame_dump( x264_t *h )
 {
-    FILE *f = fopen( h->param.psz_dump_yuv, "r+b" );
-    if( !f )
-        return;
-    /* Write the frame in display order */
-    fseek( f, (uint64_t)h->fdec->i_frame * h->param.i_height * h->param.i_width * 3/2 * sizeof(pixel), SEEK_SET );
+    FILE *f;
+
+    if( !h->param.b_mvc_flag )
+    {
+        f = fopen( h->param.psz_dump_yuv, "r+b" );
+        if( !f )
+            return;
+        /* Write the frame in display order */
+        fseek( f, (uint64_t)h->fdec->i_frame * h->param.i_height * h->param.i_width * 3/2 * sizeof(pixel), SEEK_SET );
+    }
+    else
+    {
+        // Left view
+        if( !h->fenc->b_right_view_flag )
+            f = fopen( h->param.psz_dump_yuv, "r+b" );
+
+        // Right view
+        else
+           f = fopen( h->param.psz_mvc_dump_yuv, "r+b" );
+
+        if( !f )
+        {
+            return;
+        }
+        /* Write the frame in display order */
+        fseek( f, (uint64_t) ( h->fdec->i_frame / 2  * h->param.i_height * h->param.i_width * 3/2 * sizeof(pixel) ), SEEK_SET );
+    }
     for( int y = 0; y < h->param.i_height; y++ )
-        fwrite( &h->fdec->plane[0][y*h->fdec->i_stride[0]], sizeof(pixel), h->param.i_width, f );
+         fwrite( &h->fdec->plane[0][y*h->fdec->i_stride[0]], sizeof(pixel), h->param.i_width, f );
     int cw = h->param.i_width>>1;
     int ch = h->param.i_height>>1;
     pixel *planeu = x264_malloc( (cw*ch*2+32)*sizeof(pixel) );
@@ -1429,6 +1451,23 @@ x264_t *x264_encoder_open( x264_param_t *param )
         else if( !x264_is_regular_file( f ) )
         {
             x264_log( h, X264_LOG_ERROR, "dump_yuv: incompatible with non-regular file %s\n", h->param.psz_dump_yuv );
+            goto fail;
+        }
+        fclose( f );
+    }
+
+    if( h->param.psz_mvc_dump_yuv )
+    {
+        /* create or truncate the reconstructed video file */
+        FILE *f = fopen( h->param.psz_mvc_dump_yuv, "w" );
+        if( !f )
+        {
+            x264_log( h, X264_LOG_ERROR, "dump_mvc_yuv: can't write to %s\n", h->param.psz_mvc_dump_yuv );
+            goto fail;
+        }
+        else if( !x264_is_regular_file( f ) )
+        {
+            x264_log( h, X264_LOG_ERROR, "dump_mvc_yuv: incompatible with non-regular file %s\n", h->param.psz_mvc_dump_yuv );
             goto fail;
         }
         fclose( f );

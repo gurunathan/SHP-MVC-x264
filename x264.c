@@ -760,6 +760,7 @@ static void help( x264_param_t *defaults, int longhelp )
     H2( "      --no-asm                Disable all CPU optimizations\n" );
     H2( "      --visualize             Show MB types overlayed on the encoded video\n" );
     H2( "      --dump-yuv <string>     Save reconstructed frames\n" );
+    H2( "      --MVC-dump-yuv <string> Save reconstructed frames for right view frames of MVC\n" );
     H2( "      --sps-id <integer>      Set SPS and PPS id numbers [%d]\n", defaults->i_sps_id );
     H2( "      --aud                   Use access unit delimiters\n" );
     H2( "      --force-cfr             Force constant framerate timestamp generation\n" );
@@ -935,6 +936,7 @@ static struct option long_options[] =
     { "no-progress",       no_argument, NULL, OPT_NOPROGRESS },
     { "visualize",         no_argument, NULL, OPT_VISUALIZE },
     { "dump-yuv",    required_argument, NULL, 0 },
+    { "MVC-dump-yuv",required_argument, NULL, 0 },
     { "sps-id",      required_argument, NULL, 0 },
     { "aud",               no_argument, NULL, 0 },
     { "nr",          required_argument, NULL, 0 },
