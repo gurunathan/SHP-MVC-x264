@@ -69,9 +69,21 @@ static void x264_lookahead_update_last_nonb( x264_t *h, x264_frame_t *new_nonb )
     new_nonb->i_reference_count++;
 }
 
+/*
+** Update last non_b in case of right view frames of MVC
+*/
+static void x264_lookahead_update_last_nonb_dep( x264_t *h, x264_frame_t *new_nonb )
+{
+    if( h->lookahead->last_nonb_dependent )
+        x264_frame_push_unused( h, h->lookahead->last_nonb_dependent );
+    h->lookahead->last_nonb_dependent = new_nonb;
+    new_nonb->i_reference_count++;
+}
+
 #if HAVE_THREAD
 static void x264_lookahead_slicetype_decide( x264_t *h )
 {
+    int b_mvc_flag = h->param.b_mvc_flag;
 #if defined(MVC_DEBUG_PRINT)
     printf("LOG: Inside lookahead_slicetype_decide\n");
 #endif
@@ -81,10 +93,14 @@ static void x264_lookahead_slicetype_decide( x264_t *h )
     printf("before look ahead call\n");
 #endif
     x264_lookahead_update_last_nonb( h, h->lookahead->next.list[0] );
+    if ( b_mvc_flag )
+        x264_lookahead_update_last_nonb_dep( h, h->lookahead->next_dependent.list[0] );
 #if defined(MVC_DEBUG_PRINT)
     printf("after lookahead call\n");
 #endif
 
+    // Total number of pics in the lookahead list
+    int shift = h->lookahead->next.list[0]->i_bframes + 1;
     x264_pthread_mutex_lock( &h->lookahead->ofbuf.mutex );
     while( h->lookahead->ofbuf.i_size == h->lookahead->ofbuf.i_max_size )
         x264_pthread_cond_wait( &h->lookahead->ofbuf.cv_empty, &h->lookahead->ofbuf.mutex );

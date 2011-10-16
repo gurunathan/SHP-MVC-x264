@@ -404,9 +404,11 @@ typedef struct x264_lookahead_t
     int                           i_last_keyframe;
     int                           i_slicetype_length;
     x264_frame_t                  *last_nonb;
+    x264_frame_t                  *last_nonb_dependent; /* Right view (MVC) layer frames */
     x264_pthread_t                thread_handle;
     x264_sync_frame_list_t        ifbuf;
     x264_sync_frame_list_t        next;
+    x264_sync_frame_list_t        next_dependent;  /* Right view look-ahead list */
     x264_sync_frame_list_t        ofbuf;
     uint8_t                       b_code_anchor_frame; /* used in MVC */
     uint8_t                       b_early_termination; /* Early termination from lookahead */

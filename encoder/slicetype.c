@@ -1221,15 +1221,25 @@ static int scenecut( x264_t *h, x264_mb_analysis_t *a, x264_frame_t **frames, in
     return scenecut_internal( h, a, frames, p0, p1, real_scenecut );
 }
 
+/*
+** In case of MVC, run a seperate look ahead thread for the enhancement layer.
+** ATM the frame type decisions of the base layer is copied for the enhancement layer.
+** Todo: Enhancement layer frames should use seperate function which see the correlation between
+** right view frames and the dependent left view frame(at that time instant).
+*/
+//Todo: Minimize the no of MVC checks, after all decisions are copied from the base layer
 void x264_slicetype_analyse( x264_t *h, int keyframe )
 {
     x264_mb_analysis_t a;
+    x264_mb_analysis_t a_dep;
     x264_frame_t *frames[X264_LOOKAHEAD_MAX+3] = { NULL, };
+    x264_frame_t *frames_dep[X264_LOOKAHEAD_MAX+3] = { NULL, };
     int num_frames, orig_num_frames, keyint_limit, framecnt;
     int i_mb_count = NUM_MBS;
     int cost1p0, cost2p0, cost1b1, cost2p1;
     int i_max_search = X264_MIN( h->lookahead->next.i_size, X264_LOOKAHEAD_MAX );
     int vbv_lookahead = h->param.rc.i_vbv_buffer_size && h->param.rc.i_lookahead;
+    int b_mvc_flag = h->param.b_mvc_flag;
     if( h->param.b_deterministic )
         i_max_search = X264_MIN( i_max_search, h->lookahead->i_slicetype_length + !keyframe );
 
@@ -1242,20 +1252,33 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
     if( !h->lookahead->last_nonb )
         return;
 
+    //Init stage
     frames[0] = h->lookahead->last_nonb;
+    if( b_mvc_flag )
+        frames_dep[0] = h->lookahead->last_nonb_dependent;
     for( framecnt = 0; framecnt < i_max_search && h->lookahead->next.list[framecnt]->i_type == X264_TYPE_AUTO; framecnt++ )
+    {
         frames[framecnt+1] = h->lookahead->next.list[framecnt];
+        if( b_mvc_flag )
+            frames_dep[framecnt+1] = h->lookahead->next_dependent.list[framecnt];
+    }
 
     x264_lowres_context_init( h, &a );
+    if (b_mvc_flag)
+        x264_lowres_context_init( h, &a_dep );
 
     if( !framecnt )
     {
         if( h->param.rc.b_mb_tree )
+        {
             x264_macroblock_tree( h, &a, frames, 0, keyframe );
+            if( b_mvc_flag )
+                x264_macroblock_tree( h, &a_dep, frames_dep, 0, keyframe );
+        }
         return;
     }
 
-    keyint_limit = h->param.i_keyint_max - frames[0]->i_frame + h->lookahead->i_last_keyframe - 1;
+    keyint_limit = h->param.i_keyint_max - (frames[0]->i_frame / (b_mvc_flag ? 2 : 1)) + h->lookahead->i_last_keyframe - 1;
     orig_num_frames = num_frames = h->param.b_intra_refresh ? framecnt : X264_MIN( framecnt, keyint_limit );
 
     /* This is important psy-wise: if we have a non-scenecut keyframe,
@@ -1293,14 +1316,24 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
 
                 /* Perform the frametype analysis. */
                 for( int j = 2; j < num_frames; j++ )
+                {
                     x264_slicetype_path( h, &a, frames, j, best_paths );
+                    if( b_mvc_flag )
+                        x264_slicetype_path( h, &a_dep, frames_dep, j, best_paths );
+                }
 
                 num_bframes = strspn( best_paths[best_path_index], "B" );
                 /* Load the results of the analysis into the frame types. */
                 for( int j = 1; j < num_frames; j++ )
+                {
                     frames[j]->i_type = best_paths[best_path_index][j-1] == 'B' ? X264_TYPE_B : X264_TYPE_P;
+                    if( b_mvc_flag )
+                        frames_dep[j]->i_type = frames[j]->i_type;
+                }
             }
             frames[num_frames]->i_type = X264_TYPE_P;
+            if( b_mvc_flag )
+                frames_dep[num_frames]->i_type = X264_TYPE_P;
         }
         else if( h->param.i_bframe_adaptive == X264_B_ADAPT_FAST )
         {
@@ -1317,10 +1350,16 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
                 /* syntax of this is like [list0 picture idx], [list1 pic idx], [current idx], intra penalty */
                 /* Evaluate i+2 picture as P frame with intra cost penalty */
                 cost2p1 = x264_slicetype_frame_cost( h, &a, frames, i+0, i+2, i+2, 1 );
+                if( b_mvc_flag )
+                    x264_slicetype_frame_cost( h, &a_dep, frames_dep, i+0, i+2, i+2, 1 );
                 if( frames[i+2]->i_intra_mbs[2] > i_mb_count / 2 )
                 {
                     frames[i+1]->i_type = X264_TYPE_P;
                     frames[i+2]->i_type = X264_TYPE_P;
+                    if( b_mvc_flag ) {
+                        frames_dep[i+1]->i_type = X264_TYPE_P;
+                        frames_dep[i+2]->i_type = X264_TYPE_P;
+                    }
                     i += 2;
                     continue;
                 }
@@ -1331,10 +1370,17 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
                 cost1p0 = x264_slicetype_frame_cost( h, &a, frames, i+0, i+1, i+1, 0 );
                 /* Evaluate i+2 picture as P frame without intra cost penalty */
                 cost2p0 = x264_slicetype_frame_cost( h, &a, frames, i+1, i+2, i+2, 0 );
+                if( b_mvc_flag ) {
+                    x264_slicetype_frame_cost( h, &a_dep, frames_dep, i+0, i+2, i+1, 0 );
+                    x264_slicetype_frame_cost( h, &a_dep, frames_dep, i+0, i+1, i+1, 0 );
+                    x264_slicetype_frame_cost( h, &a_dep, frames_dep, i+1, i+2, i+2, 0 );
+                }
 
                 if( cost1p0 + cost2p0 < cost1b1 + cost2p1 )
                 {
                     frames[i+1]->i_type = X264_TYPE_P;
+                    if( b_mvc_flag )
+                        frames_dep[i+1]->i_type = X264_TYPE_P;
                     i += 1;
                     continue;
                 }
@@ -1343,20 +1389,28 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
                 #define INTER_THRESH 300
                 #define P_SENS_BIAS (50 - h->param.i_bframe_bias)
                 frames[i+1]->i_type = X264_TYPE_B;
-
+                if( b_mvc_flag )
+                    frames_dep[i+1]->i_type = X264_TYPE_B;
                 int j;
                 for( j = i+2; j <= X264_MIN( i+h->param.i_bframe, num_frames-1 ); j++ )
                 {
                     int pthresh = X264_MAX(INTER_THRESH - P_SENS_BIAS * (j-i-1), INTER_THRESH/10);
                     /* Evaluate i+3 th picture as P frame with Intra penalty & reference as i+0 */
                     int pcost = x264_slicetype_frame_cost( h, &a, frames, i+0, j+1, j+1, 1 );
+                    if( b_mvc_flag )
+                        x264_slicetype_frame_cost( h, &a_dep, frames_dep, i+0, j+1, j+1, 1 );
                     if( pcost > pthresh*i_mb_count || frames[j+1]->i_intra_mbs[j-i+1] > i_mb_count/3 )
                         break;
                     frames[j]->i_type = X264_TYPE_B;
+                    if( b_mvc_flag )
+                        frames_dep[j]->i_type = X264_TYPE_B;
                 }
                 frames[j]->i_type = X264_TYPE_P;
+                if( b_mvc_flag )
+                    frames_dep[j]->i_type = X264_TYPE_P;
                 i = j;
             }
+#if 0
             if( h->param.b_mvc_flag )
             {
                 if( num_frames >= 4 )
@@ -1370,8 +1424,13 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
                 /* End P frame for the left view component */
                 frames[num_frames - 1]->i_type = X264_TYPE_P;
             }
-            /* End P frame for the right view component */
+#endif
+            /* In case of MVC, end P frame for the left view component */
             frames[num_frames]->i_type = X264_TYPE_P;
+
+            /* End P frame for the right view component */
+            if( b_mvc_flag )
+                frames_dep[num_frames]->i_type = X264_TYPE_P;
 
             /*
             ** In case of MVC, the view component after the IDR view component
@@ -1433,8 +1492,14 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
         {
             num_bframes = X264_MIN(num_frames-1, h->param.i_bframe);
             for( int j = 1; j < num_frames; j++ )
+            {
                 frames[j]->i_type = (j%(num_bframes+1)) ? X264_TYPE_B : X264_TYPE_P;
+                if( b_mvc_flag )
+                    frames_dep[j]->i_type = frames[j]->i_type;
+            }
             frames[num_frames]->i_type = X264_TYPE_P;
+            if( b_mvc_flag )
+                frames_dep[num_frames]->i_type = X264_TYPE_P;
         }
 
         /* Check scenecut on the first minigop. */
@@ -1442,6 +1507,8 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
             if( h->param.i_scenecut_threshold && scenecut( h, &a, frames, j, j+1, 0, orig_num_frames, i_max_search ) )
             {
                 frames[j]->i_type = X264_TYPE_P;
+                if( b_mvc_flag )
+                    frames_dep[j]->i_type = X264_TYPE_P;
                 num_analysed_frames = j;
                 break;
             }
@@ -1453,7 +1520,11 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
     else
     {
         for( int j = 1; j <= num_frames; j++ )
+        {
             frames[j]->i_type = X264_TYPE_P;
+            if( b_mvc_flag )
+                frames_dep[j]->i_type = X264_TYPE_P;
+        }
         reset_start = !keyframe + 1;
         num_bframes = 0;
 #if defined(MVC_DEBUG_PRINT)
@@ -1465,7 +1536,11 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
     /* Perform the actual macroblock tree analysis.
      * Don't go farther than the maximum keyframe interval; this helps in short GOPs. */
     if( h->param.rc.b_mb_tree )
+    {
         x264_macroblock_tree( h, &a, frames, X264_MIN(num_frames, h->param.i_keyint_max), keyframe );
+        if( b_mvc_flag )
+            x264_macroblock_tree( h, &a_dep, frames_dep, X264_MIN(num_frames, h->param.i_keyint_max), keyframe );
+    }
 
     /* Enforce keyframe limit. */
     if( !h->param.b_intra_refresh )
@@ -1479,7 +1554,11 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
         }
 
     if( vbv_lookahead )
+    {
         x264_vbv_lookahead( h, &a, frames, num_frames, keyframe );
+        if( b_mvc_flag )
+            x264_vbv_lookahead( h, &a_dep, frames_dep, num_frames, keyframe );
+    }
 
     /* Restore frametypes for all frames that haven't actually been decided yet. */
     for( int j = reset_start; j <= num_frames; j++ )
