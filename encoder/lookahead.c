@@ -121,7 +121,7 @@ static void x264_lookahead_slicetype_decide( x264_t *h )
     }
     x264_pthread_mutex_lock( &h->lookahead->next.mutex );
     x264_pthread_mutex_lock( &h->lookahead->next_dependent.mutex );
-    if (!h->param.b_mvc_flag)
+    if( !h->param.b_mvc_flag )
     {
       x264_lookahead_shift( &h->lookahead->ofbuf, &h->lookahead->next, shift );
     }
@@ -220,7 +220,7 @@ static void x264_lookahead_thread( x264_t *h )
         {
             shift = X264_MIN( h->lookahead->next.i_max_size - h->lookahead->next.i_size, h->lookahead->ifbuf.i_size / 2);
             shift_dependent = X264_MIN( h->lookahead->next_dependent.i_max_size - h->lookahead->next_dependent.i_size,
-                                    h->lookahead->ifbuf.i_size / 2);
+                              h->lookahead->ifbuf.i_size / 2);
             shift = X264_MIN(shift, shift_dependent);
             shift_dependent = shift;
 #ifdef __DEBUG
@@ -250,8 +250,8 @@ static void x264_lookahead_thread( x264_t *h )
                 }
             }
         } //End of else
-        x264_pthread_mutex_unlock( &h->lookahead->next.mutex );
         x264_pthread_mutex_unlock( &h->lookahead->next_dependent.mutex );
+        x264_pthread_mutex_unlock( &h->lookahead->next.mutex );
         if ( (!b_mvc_flag && (h->lookahead->next.i_size <= h->lookahead->i_slicetype_length + h->param.b_vfr_input)) ||
              (b_mvc_flag && ((h->lookahead->next.i_size <= h->lookahead->i_slicetype_length + h->param.b_vfr_input )
              || (h->lookahead->next_dependent.i_size <= h->lookahead->i_slicetype_length + h->param.b_vfr_input) ) ) )
@@ -313,7 +313,7 @@ int x264_lookahead_init( x264_t *h, int i_slicetype_length )
     /* init frame lists */
     if( x264_sync_frame_list_init( &look->ifbuf, h->param.i_sync_lookahead+3 ) ||
         x264_sync_frame_list_init( &look->next, h->frames.i_delay+3 ) ||
-        x264_sync_frame_list_init( &look->ofbuf, (h->frames.i_delay+3) * ( h->param.b_mvc_flag ? 2 : 1) ) )
+        x264_sync_frame_list_init( &look->ofbuf, ( h->frames.i_delay+3 ) * ( h->param.b_mvc_flag ? 2 : 1) ) )
         goto fail;
 
     /* for MVC lookahead */
@@ -356,7 +356,7 @@ void x264_lookahead_delete( x264_t *h )
     }
     x264_sync_frame_list_delete( &h->lookahead->ifbuf );
     x264_sync_frame_list_delete( &h->lookahead->next );
-    //Lookahead list for dependent~(right) views of MVC
+    //Lookahead list for dependent(right) views of MVC
     x264_sync_frame_list_delete( &h->lookahead->next_dependent);
     if( h->lookahead->last_nonb )
         x264_frame_push_unused( h, h->lookahead->last_nonb );
@@ -371,25 +371,18 @@ void x264_lookahead_put_frame( x264_t *h, x264_frame_t *frame )
     static int frame_num = 0;
     // if lookahead is enabled, base and dependent is divided at the next function
     if( h->param.i_sync_lookahead )
-    {
         x264_sync_frame_list_push( &h->lookahead->ifbuf, frame );
-    }
     // if lookahead is disabled, base and dependent is divided here
     else
     {
         if( !h->param.b_mvc_flag ) //AVC path
-        {
             x264_sync_frame_list_push( &h->lookahead->next, frame );
-        }
         else // mvc case
         {
-            if (frame_num & 0x1) {
+            if (frame_num & 0x1)
                 x264_sync_frame_list_push( &h->lookahead->next_dependent, frame );
-            }
             else
-            {
-            x264_sync_frame_list_push( &h->lookahead->next, frame );
-            }
+                x264_sync_frame_list_push( &h->lookahead->next, frame );
         }
     }
     frame_num++;
@@ -417,16 +410,12 @@ static void x264_lookahead_encoder_shift( x264_t *h )
         return;
     int i_frames;
     if( !h->param.b_mvc_flag ) //AVC Path
-    {
         i_frames = h->lookahead->ofbuf.list[0]->i_bframes + 1;
-    }
     /*
     ** In case of MVC, the number of frames is doubled (Left view + right view)
     */
     else
-    {
         i_frames = (h->lookahead->ofbuf.list[0]->i_bframes + 1) * 2;
-    }
     while( i_frames-- )
     {
         x264_frame_push( h->frames.current, x264_frame_shift( h->lookahead->ofbuf.list ) );
@@ -457,15 +446,11 @@ void x264_lookahead_get_frames( x264_t *h )
             {
 
                 while( (h->lookahead->ofbuf.i_size < 2) && h->lookahead->b_thread_active )
-                {
                     x264_pthread_cond_wait( &h->lookahead->ofbuf.cv_fill, &h->lookahead->ofbuf.mutex );
-                }
                 x264_lookahead_encoder_shift( h );
             }
             else // put frame is only 1. wait for next put frame
-            {
                 return;
-            }
         }
         x264_pthread_mutex_unlock( &h->lookahead->ofbuf.mutex );
         frameNum++;

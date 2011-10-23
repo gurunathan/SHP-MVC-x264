@@ -1278,7 +1278,7 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
         return;
     }
 
-    keyint_limit = h->param.i_keyint_max - (frames[0]->i_frame / (b_mvc_flag ? 2 : 1)) + h->lookahead->i_last_keyframe - 1;
+    keyint_limit = h->param.i_keyint_max - (frames[0]->i_frame / ( b_mvc_flag ? 2 : 1)) + h->lookahead->i_last_keyframe - 1;
     orig_num_frames = num_frames = h->param.b_intra_refresh ? framecnt : X264_MIN( framecnt, keyint_limit );
 
     /* This is important psy-wise: if we have a non-scenecut keyframe,
@@ -1568,12 +1568,16 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
 void x264_slicetype_decide( x264_t *h )
 {
     x264_frame_t *frames[X264_BFRAME_MAX+2];
+    x264_frame_t *frames_dep[X264_BFRAME_MAX+2];
     x264_frame_t *frm;
     int bframes;
     int brefs;
     int i_nonbframes;
     int i_firstnonbidx = -1;
     int i_num_b_frames;
+    int b_mvc_flag = h->param.b_mvc_flag;
+    static int counter = 0;
+    counter++;
 
     if( !h->lookahead->next.i_size )
         return;
@@ -1596,11 +1600,14 @@ void x264_slicetype_decide( x264_t *h )
                                                * h->sps->vui.i_num_units_in_tick
                                                / h->sps->vui.i_time_scale;
 
-        if( h->lookahead->next.list[i]->i_frame > h->i_disp_fields_last_frame && lookahead_size > 0 )
+        if( b_mvc_flag )
+            h->lookahead->next_dependent.list[i]->f_duration = h->lookahead->next.list[i]->f_duration;
+
+        if( h->lookahead->next.list[i]->i_frame / ( b_mvc_flag ? 2 : 1 ) > h->i_disp_fields_last_frame && lookahead_size > 0 )
         {
             h->lookahead->next.list[i]->i_field_cnt = h->i_disp_fields;
             h->i_disp_fields += h->lookahead->next.list[i]->i_duration;
-            h->i_disp_fields_last_frame = h->lookahead->next.list[i]->i_frame;
+            h->i_disp_fields_last_frame = h->lookahead->next.list[i]->i_frame / ( b_mvc_flag ? 2 : 1 );
         }
         else if( lookahead_size == 0 )
         {
@@ -1654,7 +1661,8 @@ void x264_slicetype_decide( x264_t *h )
             frm->i_type = h->param.b_open_gop ? X264_TYPE_I : X264_TYPE_IDR;
 
         /* Limit GOP size */
-        if( (!h->param.b_intra_refresh || frm->i_frame == 0) && frm->i_frame - h->lookahead->i_last_keyframe >= h->param.i_keyint_max )
+        if( (!h->param.b_intra_refresh || (frm->i_frame / ( b_mvc_flag ? 2 : 1 ))== 0) &&
+            (( frm->i_frame / ( b_mvc_flag ? 2 : 1 )) - h->lookahead->i_last_keyframe >= h->param.i_keyint_max))
         {
             if( frm->i_type == X264_TYPE_AUTO || frm->i_type == X264_TYPE_I )
                 frm->i_type = h->param.b_open_gop && h->lookahead->i_last_keyframe >= 0 ? X264_TYPE_I : X264_TYPE_IDR;
@@ -1708,7 +1716,7 @@ void x264_slicetype_decide( x264_t *h )
         if( frm->i_type == X264_TYPE_BREF )
             brefs++;
 
-        if( frm->i_type == X264_TYPE_AUTO )
+        if( frm->i_type == X264_TYPE_AUTO || frm->i_type == X264_TYPE_B )
             frm->i_type = X264_TYPE_B;
 
         if( !h->param.b_mvc_flag )
@@ -1732,6 +1740,7 @@ void x264_slicetype_decide( x264_t *h )
                     h->lookahead->b_early_termination = 0;
                     break;
                 }
+#if 0
                 if( i_num_b_frames )
                 {
                     i_nonbframes++;
@@ -1740,6 +1749,7 @@ void x264_slicetype_decide( x264_t *h )
                     else
                         i_firstnonbidx = bframes;
                 }
+#endif
                 /* No B frames in the current look ahead list */
                 else
                     break;
@@ -1750,6 +1760,10 @@ void x264_slicetype_decide( x264_t *h )
     if( bframes )
         h->lookahead->next.list[bframes-1]->b_last_minigop_bframe = 1;
     h->lookahead->next.list[bframes]->i_bframes = bframes;
+
+    if( b_mvc_flag )
+        h->lookahead->next_dependent.list[bframes]->i_bframes = bframes;
+
     /*
     ** When one of the views has B_REF type, mark the other view picture
     ** also of B_REF type.
@@ -1835,6 +1849,7 @@ void x264_slicetype_decide( x264_t *h )
 
     /* shift sequence to coded order.
        use a small temporary list to avoid shifting the entire next buffer around */
+#if 0
     int i_coded = h->lookahead->next.list[0]->i_frame;
     if( bframes )
     {
@@ -1928,6 +1943,44 @@ void x264_slicetype_decide( x264_t *h )
         }
         memcpy( h->lookahead->next.list, frames, (bframes+1) * sizeof(x264_frame_t*) );
     }
+#else //Using two lists for MVC
+    int i_coded = h->lookahead->next.list[0]->i_frame / ( b_mvc_flag ? 2 : 1 );
+    if( bframes )
+    {
+        int idx_list[] = { brefs+1, 1 };
+
+#if defined(MVC_DEBUG_PRINT)
+        printf("bframes = %d\n",bframes);
+        printf("brefs = %d\n",brefs);
+        printf("i_nonbframes = %d\n",i_nonbframes);
+        printf("i_firstnonbidx = %d\n",i_firstnonbidx);
+#endif
+        for( int i = 0; i < bframes; i++ )
+        {
+            int idx = idx_list[h->lookahead->next.list[i]->i_type == X264_TYPE_BREF]++;
+#if defined(MVC_DEBUG_PRINT)
+            printf("index = %d\n",idx);
+#endif
+            frames[idx] = h->lookahead->next.list[i];
+            frames[idx]->i_reordered_pts = h->lookahead->next.list[idx]->i_pts;
+            if( b_mvc_flag )
+            {
+                frames_dep[idx] = h->lookahead->next_dependent.list[i];
+                frames_dep[idx]->i_reordered_pts = frames[idx]->i_reordered_pts + 1;
+            }
+        }
+        frames[0] = h->lookahead->next.list[bframes];
+        frames[0]->i_reordered_pts = h->lookahead->next.list[0]->i_pts;
+        if( b_mvc_flag )
+        {
+            frames_dep[0] = h->lookahead->next_dependent.list[bframes];
+            frames_dep[0]->i_reordered_pts = frames[0]->i_reordered_pts + 1;
+        }
+        memcpy( h->lookahead->next.list, frames, ( bframes + 1 ) * sizeof(x264_frame_t*) );
+        if ( b_mvc_flag )
+            memcpy( h->lookahead->next_dependent.list, frames_dep, ( bframes + 1 ) * sizeof(x264_frame_t*) );
+    }
+#endif
 
 #if defined( MVC_DEBUG_PRINT )
     if( bframes )

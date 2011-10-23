@@ -823,8 +823,8 @@ static int x264_validate_parameters( x264_t *h )
         /* Due to the proliferation of broken players that don't handle dupes properly. */
         h->param.analyse.i_weighted_pred = X264_MIN( h->param.analyse.i_weighted_pred, X264_WEIGHTP_SIMPLE );
     }
-
-    if( h->param.b_mvc_flag )
+#if 0
+    if( h->param.b_mvc_flag && h->param.i_bframe )
     {
         /*
         ** The no of B frames in the command line input is for a single view.
@@ -833,6 +833,7 @@ static int x264_validate_parameters( x264_t *h )
         /* Todo : Check whether this exceeds the limit */
         h->param.i_bframe = ( h->param.i_bframe * 2 )+ 1;
     }
+#endif
     h->param.i_frame_reference = x264_clip3( h->param.i_frame_reference, 1, X264_REF_MAX );
     h->param.i_dpb_size = x264_clip3( h->param.i_dpb_size, 1, X264_REF_MAX );
 
@@ -3688,7 +3689,6 @@ void    x264_encoder_close  ( x264_t *h )
     int b_print_pcm = h->stat.i_mb_count[SLICE_TYPE_I][I_PCM]
                    || h->stat.i_mb_count[SLICE_TYPE_P][I_PCM]
                    || h->stat.i_mb_count[SLICE_TYPE_B][I_PCM];
-
     x264_lookahead_delete( h );
 
     if( h->param.i_threads > 1 )
@@ -4045,7 +4045,10 @@ int x264_encoder_delayed_frames( x264_t *h )
     x264_pthread_mutex_lock( &h->lookahead->ofbuf.mutex );
     x264_pthread_mutex_lock( &h->lookahead->ifbuf.mutex );
     x264_pthread_mutex_lock( &h->lookahead->next.mutex );
+    x264_pthread_mutex_lock( &h->lookahead->next_dependent.mutex );
     delayed_frames += h->lookahead->ifbuf.i_size + h->lookahead->next.i_size + h->lookahead->ofbuf.i_size;
+    delayed_frames += h->lookahead->next_dependent.i_size;
+    x264_pthread_mutex_unlock( &h->lookahead->next_dependent.mutex );
     x264_pthread_mutex_unlock( &h->lookahead->next.mutex );
     x264_pthread_mutex_unlock( &h->lookahead->ifbuf.mutex );
     x264_pthread_mutex_unlock( &h->lookahead->ofbuf.mutex );

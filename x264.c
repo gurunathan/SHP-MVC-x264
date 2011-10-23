@@ -1771,11 +1771,15 @@ static int encode( x264_param_t *param, cli_opt_t *opt )
         if( opt->b_progress && i_frame_output )
             i_previous = print_status( i_start, i_previous, i_frame_output, param->i_frame_total, i_file, param, 2 * last_dts - prev_dts - first_dts );
     }
+    int cnt = 0;
+#if 1
     /* Flush delayed frames */
     while( !b_ctrl_c && x264_encoder_delayed_frames( h ) )
     {
+        printf("loop cnt = %d\n",cnt++);
         prev_dts = last_dts;
         i_frame_size = encode_frame( h, opt->hout, NULL, &last_dts );
+        printf("outside\n");
         if( i_frame_size < 0 )
         {
             b_ctrl_c = 1; /* lie to exit the loop */
@@ -1791,6 +1795,7 @@ static int encode( x264_param_t *param, cli_opt_t *opt )
         if( opt->b_progress && i_frame_output )
             i_previous = print_status( i_start, i_previous, i_frame_output, param->i_frame_total, i_file, param, 2 * last_dts - prev_dts - first_dts );
     }
+#endif
 fail:
     if( pts_warning_cnt >= MAX_PTS_WARNING && cli_log_level < X264_LOG_DEBUG )
         x264_cli_log( "x264", X264_LOG_WARNING, "%d suppressed nonmonotonic pts warnings\n", pts_warning_cnt-MAX_PTS_WARNING );
