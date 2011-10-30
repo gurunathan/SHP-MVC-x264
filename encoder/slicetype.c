@@ -1341,7 +1341,8 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
             ** Frames are processed in groups.Group size will be num_frames (Ex.4).
             ** There are two P frames (Each for a view).
             */
-           int total_num_frames =  h->param.b_mvc_flag ? num_frames-3 : num_frames-2;
+           //int total_num_frames =  h->param.b_mvc_flag ? num_frames-3 : num_frames-2;
+           int total_num_frames = num_frames-2;
 #if defined(MVC_DEBUG_PRINT)
             printf("num_frames = %d\n",num_frames);
 #endif
@@ -1388,9 +1389,18 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
                 // arbitrary and untuned
                 #define INTER_THRESH 300
                 #define P_SENS_BIAS (50 - h->param.i_bframe_bias)
-                frames[i+1]->i_type = X264_TYPE_B;
+                /*
+                ** In order for Inter-view prediction to work, B frames of the
+                ** base view should be encoded as B_REF, so that this will be 
+                ** pushed to DPB and available for IVP.
+                */
+                frames[i+1]->i_type = X264_TYPE_BREF;
                 if( b_mvc_flag )
-                    frames_dep[i+1]->i_type = X264_TYPE_B;
+                    /*
+                    ** Todo: Decouple the POC kind of dependencies between the base and 
+                    ** and right views. so that this could be coded as X264_TYPE_B.
+                    */
+                    frames_dep[i+1]->i_type = X264_TYPE_BREF;
                 int j;
                 for( j = i+2; j <= X264_MIN( i+h->param.i_bframe, num_frames-1 ); j++ )
                 {
@@ -1401,9 +1411,9 @@ void x264_slicetype_analyse( x264_t *h, int keyframe )
                         x264_slicetype_frame_cost( h, &a_dep, frames_dep, i+0, j+1, j+1, 1 );
                     if( pcost > pthresh*i_mb_count || frames[j+1]->i_intra_mbs[j-i+1] > i_mb_count/3 )
                         break;
-                    frames[j]->i_type = X264_TYPE_B;
+                    frames[j]->i_type = X264_TYPE_BREF;
                     if( b_mvc_flag )
-                        frames_dep[j]->i_type = X264_TYPE_B;
+                        frames_dep[j]->i_type = X264_TYPE_BREF;
                 }
                 frames[j]->i_type = X264_TYPE_P;
                 if( b_mvc_flag )
@@ -1643,7 +1653,9 @@ void x264_slicetype_decide( x264_t *h )
         if( frm->i_type == X264_TYPE_BREF && h->param.i_bframe_pyramid < X264_B_PYRAMID_NORMAL &&
             brefs == h->param.i_bframe_pyramid )
         {
-            frm->i_type = X264_TYPE_B;
+#if 0 //gurunath - hack for testing
+            frm->i_type = X264_TYPE_B; //gurunath
+#endif
             x264_log( h, X264_LOG_WARNING, "B-ref at frame %d incompatible with B-pyramid %s \n",
                       frm->i_frame, x264_b_pyramid_names[h->param.i_bframe_pyramid] );
         }
@@ -1779,13 +1791,13 @@ void x264_slicetype_decide( x264_t *h )
         }
         else
         {
-#if defined(MVC_DEBUG_PRINT)
+#if 1 //defined(MVC_DEBUG_PRINT)
             printf("Inserting a BREF in sequence\n");
 #endif
             int pic_type = i_num_b_frames ? X264_TYPE_B : X264_TYPE_P;
             for( i = 0; i < bframes; i++ )
             {
-              if( ( h->lookahead->next.list[i]->i_type == pic_type ) && ( !h->lookahead->next.list[i]->b_right_view_flag) )
+              if( ( h->lookahead->next.list[i]->i_type == pic_type ) && ( !h->lookahead->next.list[i]->b_right_view_flag ) )
                    break;
             }
 #if defined(MVC_DEBUG_PRINT)

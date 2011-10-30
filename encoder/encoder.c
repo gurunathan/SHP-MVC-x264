@@ -220,7 +220,7 @@ static void x264_slice_header_init( x264_t *h, x264_slice_header_t *sh,
         {
             if( sh->b_ref_pic_list_reordering[list] )
             {
-#if defined(MVC_DEBUG_PRINT)
+#if 1//defined(MVC_DEBUG_PRINT)
                 printf("Temporal reordering\n");
                 printf("curr frame num value = %d\n", i_frame);
 #endif
@@ -256,7 +256,7 @@ static void x264_slice_header_init( x264_t *h, x264_slice_header_t *sh,
         */
         if( h->num_inter_view_pics > 1 )
         {
-#if defined(MVC_DEBUG_PRINT)
+#if 1 //defined(MVC_DEBUG_PRINT)
             printf("List re-ordering including dupes\n");
 #endif
             /*
@@ -1784,11 +1784,13 @@ static inline void x264_reference_check_reorder( x264_t *h )
             /* P and B-frames use different default orders. */
             if( h->sh.i_type == SLICE_TYPE_P ? framenum_diff > 0 : list == 1 ? poc_diff < 0 : poc_diff > 0 )
             {
-#if defined(MVC_DEBUG_PRINT)
+#if 1 //defined(MVC_DEBUG_PRINT)
                 printf("framenum_diff = %d\n",framenum_diff);
                 printf("Reordered List = %d\n",list);
-                printf("POC = %d\n",h->fref[list][i]->i_poc);printf("Frame num= %d\n",h->fref[list][i]->i_frame_num);
-                printf("Next POC = %d\n",h->fref[list][i+1]->i_poc);printf("Next Frame num= %d\n",h->fref[list][i+1]->i_frame_num);
+                printf("POC = %d\n",h->fref[list][i]->i_poc);
+                printf("Frame num= %d\n",h->fref[list][i]->i_frame_num);
+                printf("Next POC = %d\n",h->fref[list][i+1]->i_poc);
+                printf("Next Frame num= %d\n",h->fref[list][i+1]->i_frame_num);
                 if( !list ) printf("Reordering enabled\n");
 #endif
                 h->b_ref_reorder[list] = 1;
@@ -1993,6 +1995,13 @@ static inline void x264_reference_build_list( x264_t *h, int i_poc )
         /* Run through the DPB and constuct both the lists for temporal prediction */
         for( int i = 0; h->frames.reference[i]; i++ )
         {
+#if 1//defined(MVC_DEBUG_PRINT)
+            //if( h->fdec->b_right_view_flag )
+            {
+                printf("h->frames.reference[%d]->i_frame %d\n",  i, h->frames.reference[i]->i_frame);
+                printf("h->fenc->i_frame - 1 = %d\n", h->fenc->i_frame - 1);
+            }
+#endif
             if( h->frames.reference[i]->b_corrupt )
                 continue;
 
@@ -2005,7 +2014,8 @@ static inline void x264_reference_build_list( x264_t *h, int i_poc )
 
                 /* Current frame is right view type & reference picture is of left view type and captured at same time instant*/
                 //else if( ( h->fdec->b_right_view_flag ) && ( !h->frames.reference[i]->b_right_view_flag ) && ( h->frames.reference[i]->b_avail_for_inter_view_pred ))
-                else if( ( h->fdec->b_right_view_flag ) && !( h->frames.reference[i]->b_right_view_flag ) && ( (i_poc/2) - h->frames.reference[i]->i_frame_num == 1 ))
+                //else if( ( h->fdec->b_right_view_flag ) && !( h->frames.reference[i]->b_right_view_flag ) && ( (i_poc/2) - h->frames.reference[i]->i_frame_num == 1 ))
+                else if( ( h->fdec->b_right_view_flag ) && !( h->frames.reference[i]->b_right_view_flag ) && ( h->frames.reference[i]->i_frame == h->fenc->i_frame - 1 ))
                 {
                     h->fref[0][h->i_ref[0]++] = h->frames.reference[i];
                     ++h->num_inter_view_pics;
@@ -2037,6 +2047,8 @@ static inline void x264_reference_build_list( x264_t *h, int i_poc )
             }
         }
     }
+    if( h->fdec->b_right_view_flag )
+        assert(h->num_inter_view_pics > 0);
 
     /* Order reference lists by distance from the current frame. */
     for( int list = 0; list < 2; list++ )
@@ -3477,7 +3489,8 @@ static int x264_encoder_frame_end( x264_t *h, x264_t *thread_current,
     pic_out->i_dts = h->fdec->i_dts;
 
     if( pic_out->i_pts < pic_out->i_dts )
-        x264_log( h, X264_LOG_WARNING, "invalid DTS: PTS is less than DTS\n" );
+        //x264_log( h, X264_LOG_WARNING, "invalid DTS: PTS is less than DTS\n" );
+        x264_log( h, X264_LOG_WARNING, "invalid DTS: PTS(%lld) is less than DTS(%lld)\n", pic_out->i_pts, pic_out->i_dts );
 
     pic_out->img.i_csp = X264_CSP_NV12;
 #if HIGH_BIT_DEPTH
